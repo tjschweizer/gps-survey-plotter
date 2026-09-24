@@ -16,6 +16,8 @@ dependencies = [
     "pyqtgraph>=0.13",
     "pyvista>=0.44",
     "pyvistaqt>=0.11",
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
 ]
 
 [project.scripts]
@@ -23,6 +25,8 @@ yardsurvey = "gpsrtk.ui.main:main"
 
 [dependency-groups]
 dev = [
+    "httpx2>=2.13",
+    "playwright>=1.45",
     "pytest>=8.2",
 ]
 
@@ -40,4 +44,5 @@ testpaths = ["tests"]
 addopts = "-m 'not network'"
 markers = [
     "network: hits a live external service",
+    "browser: drives the page in Chromium through Playwright",
 ]

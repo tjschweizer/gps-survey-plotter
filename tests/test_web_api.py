@@ -1,0 +1,573 @@
+"""The HTTP layer: what the browser can ask for, and what it gets back.
+
+The rules behind each action are tested where they live (`test_plan_edit`,
+`test_project`, `test_merge`). These pin the contract around them: that every
+action replies with a snapshot and says what happened, that failures come
+back as dialogs rather than crashes, that the busy state always clears, and
+that nothing outside this machine's own page can drive the server.
+"""
+
+import io
+import zipfile
+
+import numpy as np
+import pytest
+from fastapi.testclient import TestClient
+
+from gpsrtk.app import views
+from gpsrtk.io.imagery import NoCoverageError, RasterLayer
+from gpsrtk.web import create_app
+
+E0, N0 = 449712.0, 4604565.0
+ACTION = {"X-Yard-Survey": "1"}
+
+
+class StubImagery:
+    """Stands in for a web service, with controllable behaviour."""
+
+    description = "stub"
+    attribution = "stub credit"
+
+    def __init__(self, name="stub", *, reachable=True, outcome="ok"):
+        self.name = name
+        self._reachable = reachable
+        self._outcome = outcome
+
+    def available(self):
+        return (True, "ok") if self._reachable else (False, "unreachable")
+
+    def fetch(self, extent, epsg, size=1024):
+        if self._outcome == "blank":
+            raise NoCoverageError("no coverage for this extent")
+        if self._outcome == "boom":
+            raise RuntimeError("service exploded")
+        rng = np.random.default_rng(0)
+        return RasterLayer(image=rng.integers(0, 255, (32, 32, 3), dtype=np.uint8),
+                           extent=extent, epsg=epsg, source=self.name,
+                           attribution=self.attribution)
+
+
+class StubLinework:
+    name = "stubvec"
+    description = "stub linework"
+    survey_grade = False
+
+    def available(self):
+        return True, "ok"
+
+    def fetch(self, extent, epsg):
+        from gpsrtk.io.vector import VectorLayer
+
+        ring = np.array([[extent.xmin, extent.ymin], [extent.xmax, extent.ymax]])
+        return VectorLayer(rings=[ring], epsg=epsg, source="stubvec")
+
+
+@pytest.fixture
+def app(state):
+    return create_app(state, vector_providers={"stubvec": StubLinework()})
+
+
+@pytest.fixture
+def client(app):
+    return TestClient(app, base_url="http://127.0.0.1", headers=ACTION)
+
+
+@pytest.fixture
+def server(app):
+    return app.state.server
+
+
+def post(client, url, body=None, status=200):
+    r = client.post(url, json=body or {})
+    assert r.status_code == status, r.text
+    return r.json()
+
+
+def with_imagery(state, monkeypatch, **providers):
+    monkeypatch.setattr(state, "all_providers",
+                        lambda: {n: (p, False) for n, p in providers.items()})
+
+
+# --- who may talk to it ------------------------------------------------------------
+
+def test_actions_need_the_page_header(app):
+    """A custom header cannot be sent cross-site without a CORS preflight,
+    which this server never grants - so another site cannot drive it."""
+    bare = TestClient(app, base_url="http://127.0.0.1")
+    r = bare.post("/api/vertical/clear", json={})
+    assert r.status_code == 403
+    assert r.json()["error"]["title"] == "Refused"
+
+
+def test_actions_from_another_origin_are_refused(client):
+    r = client.post("/api/vertical/clear", json={},
+                    headers={"Origin": "https://example.com"})
+    assert r.status_code == 403
+
+
+def test_actions_from_its_own_page_are_accepted(client):
+    r = client.post("/api/vertical/clear", json={},
+                    headers={"Origin": "http://127.0.0.1:8765"})
+    assert r.status_code == 200
+
+
+def test_a_foreign_host_name_is_refused(app):
+    """A page cannot reach this server by pointing a hostname of its own at
+    127.0.0.1 and then calling it same-origin."""
+    r = TestClient(app, base_url="http://attacker.example").get("/api/state")
+    assert r.status_code == 400
+
+
+def test_reading_needs_no_header(app):
+    r = TestClient(app, base_url="http://127.0.0.1").get("/api/state")
+    assert r.status_code == 200
+
+
+# --- the snapshot ------------------------------------------------------------------
+
+def test_the_snapshot_describes_the_loaded_data(client):
+    s = client.get("/api/state").json()
+    assert s["has_data"]
+    assert [ly["name"] for ly in s["layers"] if ly["active"]] == ["track_points"]
+    assert s["chain"]["total"].endswith("kept)")
+    assert "crossover residuals" in s["qc"]
+    assert s["vertical"]["solved"] is False
+    assert "RAW ELLIPSOIDAL" in s["vertical"]["text"]
+    assert s["surface"]["measured"] > 0.5
+    assert len(s["home"]) == 4
+    assert s["title"] == "Yard Survey"
+
+
+def test_every_action_replies_with_the_moved_revisions(client):
+    before = client.get("/api/state").json()["rev"]
+    reply = post(client, "/api/layers/visible", {"name": "spots", "visible": False})
+    after = reply["state"]["rev"]
+    assert after["selection"] == before["selection"] + 1
+    assert after["result"] == before["result"]
+    assert not next(ly for ly in reply["state"]["layers"] if ly["name"] == "spots")["visible"]
+
+
+def test_switching_the_active_layer_rebuilds_from_it(client):
+    s = post(client, "/api/layers/active", {"name": "spots"})["state"]
+    assert [ly["name"] for ly in s["layers"] if ly["active"]] == ["spots"]
+    assert s["chain"]["stages"][0]["counts"].startswith("14 →")
+
+
+# --- heavy resources ----------------------------------------------------------------
+
+def test_points_come_as_one_binary_buffer(client, state):
+    r = client.get("/api/points", params={"color_by": "fix quality"})
+    assert r.headers["content-type"] == "application/octet-stream"
+    points = views.unpack_points(r.content)
+    assert points["total"] == len(state.result) == len(points["x"])
+    # Fixed only by default, so every point is the fixed green.
+    assert (points["rgba"][:, :3] == (60, 200, 90)).all()
+    x, y = state.site.to_local(state.result.df["e"].to_numpy(),
+                               state.result.df["n"].to_numpy())
+    assert points["x"] == pytest.approx(x, abs=1e-3)
+    assert points["y"] == pytest.approx(y, abs=1e-3)
+
+
+def test_points_are_subsampled_above_the_cap(client, state, monkeypatch):
+    monkeypatch.setattr(views, "MAX_SCATTER", 1000)
+    points = views.unpack_points(client.get("/api/points").content)
+    assert points["total"] == len(state.result)
+    assert len(points["x"]) == 1000
+    assert f"showing {1000:,}" in client.get("/api/state").json()["points_note"]
+
+
+def test_every_colouring_has_a_colour_per_point(client, state):
+    n = len(state.result)
+    for colour in ("elevation", "fix quality", "speed", "session"):
+        points = views.unpack_points(
+            client.get("/api/points", params={"color_by": colour, "cmap": "viridis"}).content)
+        assert points["rgba"].shape == (n, 4), colour
+
+
+def test_the_surface_image_is_north_up(state):
+    """Row 0 of the grid is the south edge; row 0 of an image is the top.
+    Getting the flip wrong mirrors the lot north to south, silently."""
+    from PIL import Image
+
+    from gpsrtk.surface import Extent, Surface
+
+    z = np.tile(np.linspace(0.0, 1.0, 40)[:, None], (1, 40))    # rises northward
+    surface = Surface(z=z, mask=np.zeros_like(z, bool),
+                      extent=Extent(0, 40, 0, 40), px=1.0, n_points=1, n_cells=1)
+    img = np.asarray(Image.open(io.BytesIO(views.surface_png(surface, "gray"))))
+    assert img[:5, :, :3].mean() > img[-5:, :, :3].mean() + 100
+
+
+def test_unmeasured_cells_are_transparent(state):
+    from PIL import Image
+
+    s = state.surface
+    img = np.asarray(Image.open(io.BytesIO(views.surface_png(s))))
+    assert ((img[..., 3] == 0) == np.flipud(s.mask)).all()
+
+
+def test_the_3d_grid_leaves_unmeasured_cells_empty(client, state):
+    g = client.get("/api/surface/grid").json()
+    s = state.surface
+    assert len(g["y"]) == len(g["z"]) == s.z.shape[0]
+    assert len(g["x"]) == len(g["z"][0]) == s.z.shape[1]
+    nulls = sum(v is None for row in g["z"] for v in row)
+    assert nulls == int(s.mask.sum())
+    assert g["colorscale"][0][0] == 0.0 and g["colorscale"][-1][0] == 1.0
+
+
+def test_features_carry_spot_markers_once_each(client):
+    """FEATURE_POINTS repeats every spot; drawing both would double them."""
+    markers = client.get("/api/features").json()["markers"]
+    assert len(markers) == 12          # 14 shots of 12 distinct points
+
+
+# --- the busy state always clears ------------------------------------------------------
+#
+# The desktop app's wait cursor was a stack, and an unbalanced push left an
+# hourglass on screen for good. The browser shows a busy overlay while an
+# action holds the state; these check it is released however the action ends.
+
+def _idle(client):
+    return client.get("/api/progress").json()["busy"] is False
+
+
+@pytest.mark.parametrize("outcome,status", [("ok", 200), ("blank", 400), ("boom", 400)])
+def test_busy_clears_after_fetching_imagery(client, state, monkeypatch, outcome, status):
+    with_imagery(state, monkeypatch, stub=StubImagery(outcome=outcome))
+    r = client.post("/api/imagery/fetch", json={"name": "stub"})
+    assert r.status_code == status
+    assert _idle(client)
+
+
+def test_a_blank_tile_is_reported_as_no_coverage(client, state, monkeypatch):
+    with_imagery(state, monkeypatch, stub=StubImagery(outcome="blank"))
+    error = post(client, "/api/imagery/fetch", {"name": "stub"}, 400)["error"]
+    assert error["title"] == "No coverage here" and error["level"] == "warning"
+
+
+def test_busy_clears_when_the_provider_is_unreachable(client, state, monkeypatch):
+    with_imagery(state, monkeypatch, stub=StubImagery(reachable=False))
+    error = post(client, "/api/imagery/fetch", {"name": "stub"}, 400)["error"]
+    assert error["title"] == "Imagery unavailable"
+    assert _idle(client)
+
+
+def test_a_successful_fetch_actually_stores_the_layer(client, state, monkeypatch):
+    """Guard against the busy tests passing because nothing happened."""
+    with_imagery(state, monkeypatch, stub=StubImagery())
+    s = post(client, "/api/imagery/fetch", {"name": "stub"})["state"]
+    assert [b["name"] for b in s["basemaps"]] == ["stub"]
+    assert s["basemaps"][0]["visible"]
+    assert "stub credit" in s["info"]
+    png = client.get("/api/basemap.png", params={"name": "stub"})
+    assert png.headers["content-type"] == "image/png"
+
+
+def test_fetch_all_reports_and_releases(client, state, monkeypatch):
+    with_imagery(state, monkeypatch, good=StubImagery("good"),
+                 blank=StubImagery("blank", outcome="blank"))
+    reply = post(client, "/api/imagery/fetch_all")
+    assert "1 fetched, 1 with no coverage here" in reply["notice"]["text"]
+    assert _idle(client)
+
+
+def test_busy_clears_after_fetching_linework(client):
+    s = post(client, "/api/vectors/fetch", {"name": "stubvec"})["state"]
+    assert _idle(client)
+    assert "linework REFERENCE ONLY" in s["info"]
+    assert len(client.get("/api/features").json()["vectors"]) == 1
+
+
+def test_busy_clears_after_solving_the_datum(client, state):
+    reply = post(client, "/api/vertical/solve", {"mode": "local"})
+    assert _idle(client)
+    assert state.vertical is not None
+    assert reply["notice"]["title"] == "Vertical model (local)"
+    assert reply["state"]["vertical"]["solved"]
+
+
+def test_busy_clears_when_solving_fails(client, state, monkeypatch):
+    def fail(*a, **k):
+        raise RuntimeError("nope")
+
+    monkeypatch.setattr(state, "solve_vertical", fail)
+    error = post(client, "/api/vertical/solve", {"mode": "local"}, 400)["error"]
+    assert error == {"title": "Could not solve", "text": "nope", "level": "error"}
+    assert _idle(client)
+
+
+def test_nested_actions_stay_balanced(server):
+    with server.acting("outer"):
+        with server.acting("inner"):
+            assert server.busy == "inner"
+        assert server.busy == "outer"
+    assert server.busy is None
+
+
+# --- dialogs: notices, errors and confirmations ---------------------------------------------
+
+def test_an_action_without_data_says_so(app, tmp_path):
+    from gpsrtk.app import AppState
+    from gpsrtk.site import example_site
+
+    empty = TestClient(create_app(AppState(site=example_site(), cache_dir=tmp_path)),
+                       base_url="http://127.0.0.1", headers=ACTION)
+    error = post(empty, "/api/sessions", status=400)["error"]
+    assert error == {"title": "No data", "text": "Load an export first.", "level": "info"}
+
+
+def test_a_refused_plan_edit_is_a_warning_with_its_own_title(client):
+    post(client, "/api/plan/point/add", {"x": 12.0, "y": 15.0})
+    error = post(client, "/api/plan/cell",
+                 {"number": 1, "field": "rod", "value": "forty"}, 400)["error"]
+    assert error["title"] == "Rod reading" and error["level"] == "warning"
+
+
+def test_a_bulk_delete_asks_and_only_then_deletes(client, state):
+    for x in (10.0, 12.0, 14.0):
+        post(client, "/api/plan/point/add", {"x": x, "y": 15.0})
+    reply = post(client, "/api/plan/delete", {"numbers": [1, 2]})
+    assert reply["confirm"]["title"] == "Delete points"
+    assert "state" not in reply
+    assert len(state.plan.points) == 3
+
+    post(client, "/api/plan/delete", {"numbers": [1, 2], "confirm": True})
+    assert [p.number for p in state.plan.points] == [3]
+
+
+def test_a_merge_offers_to_solve_the_offsets(client, synthetic_outing2):
+    notice = post(client, "/api/export/add", {"path": str(synthetic_outing2)})["notice"]
+    assert notice["level"] == "info"
+    assert notice["actions"] == [{"label": "Solve session offsets",
+                                  "post": "/api/vertical/solve",
+                                  "body": {"mode": "ellipsoidal"}}]
+
+
+def test_a_merge_that_cannot_be_reconciled_is_a_warning(
+        client, synthetic_outing2, synthetic_elsewhere):
+    post(client, "/api/export/add", {"path": str(synthetic_outing2)})
+    notice = post(client, "/api/export/add", {"path": str(synthetic_elsewhere)})["notice"]
+    assert notice["level"] == "warning"
+    assert "CANNOT BE RECONCILED" in notice["text"]
+    assert notice["actions"] == []
+
+
+def test_opening_a_missing_file_is_an_error_not_a_crash(client, tmp_path):
+    error = post(client, "/api/export/open", {"path": str(tmp_path / "nope.zip")},
+                 400)["error"]
+    assert error["title"] == "Could not open"
+
+
+# --- the plan through the API ---------------------------------------------------------------
+
+def test_points_are_placed_and_moved_in_local_metres(client, state):
+    reply = post(client, "/api/plan/point/add", {"x": 12.0, "y": 15.0})
+    assert reply["selected"] == 1
+    point = state.plan.by_number(1)
+    assert (point.planned_e, point.planned_n) == pytest.approx((E0, N0))
+
+    reply = post(client, "/api/plan/point/move", {"number": 1, "x": 14.0, "y": 14.0})
+    assert reply["moved"]
+    assert (point.planned_e, point.planned_n) == pytest.approx((E0 + 2, N0 - 1))
+
+
+def test_a_measured_point_is_not_moved(client, state):
+    post(client, "/api/plan/point/add", {"x": 12.0, "y": 15.0})
+    post(client, "/api/plan/coords", {"number": 1, "frame": "local ft",
+                                      "x": "40", "y": "50"})
+    reply = post(client, "/api/plan/point/move", {"number": 1, "x": 20.0, "y": 20.0})
+    assert reply["moved"] is False
+    assert state.plan.by_number(1).planned_e == pytest.approx(E0)
+
+
+def test_a_line_and_a_setup_can_be_drawn(client):
+    s = post(client, "/api/plan/line/add",
+             {"vertices": [[5.0, 5.0], [10.0, 6.0], [15.0, 5.0]]})["state"]
+    assert s["plan"]["lines"][0]["line_id"] == "line-1"
+    assert len(s["plan"]["points"]) == 3
+    s = post(client, "/api/plan/setup/add", {"x": 20.0, "y": 10.0})["state"]
+    assert s["plan"]["setups"] == [{"name": "A", "x": pytest.approx(20.0),
+                                    "y": pytest.approx(10.0)}]
+
+
+def test_a_position_editor_action_says_what_it_did(client):
+    post(client, "/api/plan/point/add", {"x": 12.0, "y": 15.0})
+    reply = post(client, "/api/plan/coords",
+                 {"number": 1, "frame": "UTM m", "x": str(E0 + 0.5), "y": str(N0)})
+    assert reply["result"].startswith("Measured position set")
+    reply = post(client, "/api/plan/coords/clear", {"number": 1})
+    assert "planned mark stands" in reply["result"]
+
+
+def test_solving_the_alignment_applies_and_reports(client, state):
+    for i in range(3):
+        p = state.plan.add_point(449710.0 + 5 * i, 4604563.0, purpose="building corner")
+        p.observed_e, p.observed_n = p.planned_e + 0.30, p.planned_n - 0.15
+        p.method, p.fix = "rtk", 4
+    state.plan_changed()
+
+    reply = post(client, "/api/imagery/offset/solve")
+    assert state.imagery_offset.de == pytest.approx(0.30)
+    assert "imagery moved" in reply["notice"]["text"].lower()
+    # 0.30 m is 0.98 ft, which is what the alignment boxes show.
+    assert reply["state"]["imagery_offset"]["de_ft"] == pytest.approx(0.98, abs=0.005)
+
+
+def test_solving_with_nothing_to_solve_from_explains_itself(client, state):
+    error = post(client, "/api/imagery/offset/solve", status=400)["error"]
+    assert state.imagery_offset.zero
+    assert "see in the photo" in error["text"]
+    assert error["level"] == "info"
+
+
+# --- the filter stack ----------------------------------------------------------------------
+
+def test_stages_can_be_added_moved_and_removed(client):
+    s = post(client, "/api/chain/add", {"kind": "accuracy_threshold"})["state"]
+    kinds = [st["kind"] for st in s["chain"]["stages"]]
+    assert kinds[-1] == "accuracy_threshold"
+    s = post(client, "/api/chain/move", {"index": len(kinds) - 1, "delta": -1})["state"]
+    assert s["chain"]["stages"][-2]["kind"] == "accuracy_threshold"
+    s = post(client, "/api/chain/remove", {"index": len(kinds) - 2})["state"]
+    assert "accuracy_threshold" not in [st["kind"] for st in s["chain"]["stages"]]
+
+
+def test_a_parameter_is_parsed_from_what_was_typed(client, state):
+    s = post(client, "/api/chain/edit",
+             {"index": 2, "enabled": True, "params": {"minimum": "0.9"}})["state"]
+    assert state.chain.stages[2].minimum == pytest.approx(0.9)
+    assert s["chain"]["stages"][2]["counts"] != "disabled"
+
+
+def test_a_parameter_the_stage_cannot_use_is_undone(client, state):
+    """A mistyped value used to stay in the chain, holding a value no stage
+    could apply. The edit is rolled back and the error shown instead."""
+    before = state.chain.to_list()
+    error = post(client, "/api/chain/edit",
+                 {"index": 2, "enabled": True, "params": {"minimum": "'fast'"}},
+                 400)["error"]
+    assert error["title"] == "Filter parameter"
+    assert state.chain.to_list() == before
+    assert state.result is not None
+
+
+# --- the datum tie ---------------------------------------------------------------------------
+
+def test_the_datum_form_lists_the_points_that_were_shot(client):
+    form = client.get("/api/datum").json()
+    assert form["points"] == list(range(1, 13))
+    assert form["point"] == 1 and form["elev_ft"] == 100.0 and not form["tied"]
+
+
+def test_changing_the_tie_re_solves_a_solved_model(client, state):
+    post(client, "/api/vertical/solve", {"mode": "local"})
+    reply = post(client, "/api/datum", {"point": "1", "elev_ft": 250.0,
+                                        "note": "slab", "frame": "Revit", "tied": True})
+    assert reply["notice"]["title"].startswith("Vertical model")
+    assert state.site.vertical.tied_to_model
+    assert "[tied to Revit]" in reply["state"]["qc"]
+
+
+def test_a_bad_benchmark_is_refused(client):
+    error = post(client, "/api/datum", {"point": "garage", "elev_ft": 100.0},
+                 400)["error"]
+    assert "'garage' is not a point id" in error["text"]
+
+
+# --- files, downloads and projects -------------------------------------------------------------
+
+def _zip_names(client, url):
+    r = client.get(url)
+    assert r.status_code == 200
+    assert r.headers["content-disposition"].startswith("attachment")
+    return sorted(zipfile.ZipFile(io.BytesIO(r.content)).namelist())
+
+
+def test_the_revit_export_is_a_download_with_its_origin(client):
+    reply = post(client, "/api/export/revit")
+    assert _zip_names(client, reply["download"]["url"]) == \
+        ["revit_points_ft.csv", "revit_points_ft_ORIGIN.txt"]
+    # No vertical model: these are antenna heights, and it says so loudly.
+    assert reply["notice"]["level"] == "warning"
+    assert "WARNING: no vertical model applied" in reply["notice"]["text"]
+
+
+def test_the_heightmap_is_a_download_of_every_file(client):
+    reply = post(client, "/api/export/heightmap")
+    names = _zip_names(client, reply["download"]["url"])
+    assert "heightmap_fixed_16bit.png" in names
+    assert "heightmap_fixed_mask.npy" in names
+    assert "heightmap_fixed.pgw" in names
+
+
+def test_the_field_sheet_opens_in_the_browser(client):
+    post(client, "/api/plan/point/add", {"x": 12.0, "y": 15.0})
+    reply = post(client, "/api/plan/fieldsheet")
+    assert reply["download"]["inline"]
+    r = client.get(reply["download"]["url"])
+    assert r.headers["content-disposition"].startswith("inline")
+    assert "Tie A" in r.text
+
+
+def test_an_expired_download_says_so(client):
+    r = client.get("/api/downloads/0123456789abcdef")
+    assert r.status_code == 404 and "expired" in r.text
+
+
+def test_saving_needs_somewhere_to_save(client):
+    error = post(client, "/api/project/save", {"view": {}}, 400)["error"]
+    assert error["title"] == "Save project"
+
+
+def test_a_project_saves_and_reopens_through_the_api(client, state, tmp_path):
+    view = {"colormap": "magma", "color_by": "session", "tab": 0}
+    s = post(client, "/api/project/save",
+             {"path": str(tmp_path / "api"), "view": view})["state"]
+    assert s["project_path"].endswith("api.yardproj")
+    assert s["title"] == "Yard Survey — api.yardproj"
+
+    before = s["rev"]["view"]
+    s = post(client, "/api/project/open", {"path": s["project_path"]})["state"]
+    assert s["view"] == view
+    assert s["rev"]["view"] > before
+
+
+def test_a_project_with_a_missing_export_opens_with_a_warning(client, tmp_path):
+    from gpsrtk.project import Project
+    from gpsrtk.site import example_site
+
+    path = Project(site=example_site(), sources=[str(tmp_path / "gone.zip")]).save(
+        tmp_path / "p.yardproj")
+    notice = post(client, "/api/project/open", {"path": str(path)})["notice"]
+    assert notice["level"] == "warning"
+    assert "source not found" in notice["text"]
+
+
+def test_the_file_listing_filters_and_orders(client, tmp_path):
+    (tmp_path / "b folder").mkdir()
+    (tmp_path / "a.zip").write_bytes(b"x")
+    (tmp_path / "notes.txt").write_text("x")
+    (tmp_path / ".hidden.zip").write_bytes(b"x")
+    listing = client.get("/api/files", params={"dir": str(tmp_path), "exts": ".zip"}).json()
+    names = [(e["name"], e["dir"]) for e in listing["entries"]]
+    assert ("b folder", True) in names and ("a.zip", False) in names
+    assert "notes.txt" not in dict(names) and ".hidden.zip" not in dict(names)
+    assert names.index(("b folder", True)) < names.index(("a.zip", False))
+    assert listing["parent"] == str(tmp_path.parent.resolve())
+
+
+def test_a_folder_that_is_not_there_is_a_warning(client, tmp_path):
+    r = client.get("/api/files", params={"dir": str(tmp_path / "nowhere")})
+    assert r.status_code == 400 and r.json()["error"]["level"] == "warning"
+
+
+def test_the_page_is_served_and_always_revalidated(client):
+    r = client.get("/")
+    assert r.status_code == 200 and "Yard Survey" in r.text
+    assert r.headers["cache-control"] == "no-cache"
+    assert client.get("/static/js/main.js").headers["cache-control"] == "no-cache"
+
+
+def test_quit_without_a_server_to_stop_says_so(client):
+    assert post(client, "/api/quit") == {"stopping": False}
