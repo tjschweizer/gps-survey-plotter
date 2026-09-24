@@ -6,6 +6,7 @@ import * as map2d from "./map2d.js";
 import * as view3d from "./view3d.js";
 import { cancelLine } from "./planmap.js";
 import "./panels/layers.js";
+import "./panels/sessions.js";
 import "./panels/chain.js";
 import "./panels/basemaps.js";
 import "./panels/plan.js";
@@ -36,7 +37,7 @@ for (const b of document.querySelectorAll("#tabs button")) {
 // enough that the panels are still usable.
 const DOCK_MIN = 210;
 const root = document.documentElement.style;
-for (const [key, fallback] of [["left-w", 300], ["right-w", 390], ["qc-h", 128]]) {
+for (const [key, fallback] of [["left-w", 300], ["right-w", 390], ["qc-h", 150]]) {
   root.setProperty(`--${key}`, `${recall(key, fallback)}px`);
 }
 

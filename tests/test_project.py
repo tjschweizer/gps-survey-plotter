@@ -237,8 +237,9 @@ def test_reopening_reproduces_identical_elevations(stubbed, tmp_path):
     assert other.basemaps["terrain-a"].opacity == pytest.approx(0.4)
     assert {b.provider for b in other.visible_basemaps} == \
            {"photo-a", "terrain-a"}
-    # The view comes back the way it was left.
-    assert project.view == {"colormap": "viridis", "tab": 1}
+    # The view comes back the way it was left, with the session comparison.
+    assert project.view == {"colormap": "viridis", "tab": 1, "hidden_sessions": [],
+                            "surface_from_shown_sessions": False}
     assert other.view == project.view
 
 

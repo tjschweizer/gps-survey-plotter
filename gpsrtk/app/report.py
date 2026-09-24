@@ -102,6 +102,11 @@ def qc_text(state) -> str:
     ]
     if stats.get("n"):
         lines.append(f"  systematic bias {stats['bias'] * 100:+.2f} cm")
+    if state.surface_from_shown and state.hiding:
+        # Say so wherever the numbers are read: these describe a subset.
+        shown = [n for n in state.sessions if n not in state.hiding]
+        lines.append(f"  from {len(shown)} of {len(state.sessions)} sessions: "
+                     + ", ".join(shown))
     lines.append("")
 
     s = state.surface
@@ -124,6 +129,9 @@ def qc_text(state) -> str:
         lines.append(
             f"Heights   {m_to_ft(lo):.2f} – {m_to_ft(hi):.2f} ft   "
             f"relief {m_to_ft(hi - lo) * 12:.1f} in   [{datum}]")
+        terrain = terrain_line(s)
+        if terrain:
+            lines.append(terrain)
     return "\n".join(lines)
 
 
@@ -208,3 +216,54 @@ def services_report(imagery: dict, vectors: dict) -> str:
         ok, msg = p.available()
         lines.append(f"  {'OK  ' if ok else 'DOWN'}  {name} — {msg}")
     return "\n".join(lines)
+
+
+# --- what a figure was drawn from ------------------------------------------------
+
+MPS_PER_MPH = 0.44704
+
+# Stages that tidy the data rather than choose it. A title that listed them
+# would bury the choices that actually change the map.
+HOUSEKEEPING = frozenset({"percentile_despike", "bin_to_cell"})
+
+
+def filter_summary(chain) -> str:
+    """The data choices a filter stack makes, in words: "speed > 2.0 mph"."""
+    parts = []
+    for stage in chain.stages:
+        if not stage.enabled or stage.kind in HOUSEKEEPING:
+            continue
+        if stage.kind == "fix_select":
+            values = sorted(int(v) for v in stage.values)
+            parts.append("RTK fixed only" if values == [4] else
+                         "fixed and float" if values == [4, 5] else
+                         f"fix {', '.join(map(str, values))}")
+        elif stage.kind == "speed_threshold":
+            if stage.minimum is not None:
+                parts.append(f"speed > {stage.minimum / MPS_PER_MPH:.1f} mph")
+            if stage.maximum is not None:
+                parts.append(f"speed < {stage.maximum / MPS_PER_MPH:.1f} mph")
+        else:
+            parts.append(stage.describe())
+    return " · ".join(parts)
+
+
+def figure_note(state) -> str:
+    """The subtitle for a printed map: which points it was drawn from."""
+    bits = [filter_summary(state.chain)]
+    if state.surface_from_shown and state.hiding:
+        shown = [n for n in state.sessions if n not in state.hiding]
+        bits.append("sessions: " + ", ".join(shown))
+    return " · ".join(b for b in bits if b)
+
+
+def terrain_line(surface) -> str:
+    """Slope and mapped area, for the QC readout."""
+    from .. import terrain
+
+    stats = terrain.slope(surface).stats()
+    if not stats.get("n"):
+        return ""
+    return (f"Terrain   slope median {stats['median']:.1f}%, "
+            f"p90 {stats['p90']:.1f}%, max {stats['max']:.1f}%   "
+            f"{terrain.mapped_area_m2(surface):,.0f} m² mapped")

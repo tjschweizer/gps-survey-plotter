@@ -58,19 +58,39 @@ def _png(rgba: np.ndarray) -> bytes:
 def _cmap(name: str):
     import matplotlib
 
-    return matplotlib.colormaps[name if name in COLORMAPS else "terrain"]
+    known = name in COLORMAPS or name == "magma_r"
+    return matplotlib.colormaps[name if known else "terrain"]
 
 
 # --- points ---------------------------------------------------------------------
 
-def scatter_frame(ps, cap: int | None = None):
+def session_palette(names) -> dict[str, tuple[int, int, int]]:
+    """A fixed colour per session, from the full list of sessions.
+
+    Assigned from every session in the data, not from those currently
+    drawn, so hiding one session never recolours the others - a colour that
+    changed meaning between two views would make comparing them worthless.
+    """
+    import matplotlib
+
+    table = (np.asarray(matplotlib.colormaps["tab10"].colors) * 255).astype(int)
+    return {name: tuple(int(c) for c in table[i % len(table)])
+            for i, name in enumerate(sorted(map(str, names)))}
+
+
+def drawn_points(state):
+    """The result rows the plan view draws: every shown session."""
+    ps = state.shown(state.result)
+    return None if ps is None else ps.df
+
+
+def scatter_frame(d, cap: int | None = None):
     """The rows to draw, and whether they are a subsample.
 
     The subsample is seeded, so the same data always shows the same points
     and a redraw does not make the scatter shimmer.
     """
     cap = MAX_SCATTER if cap is None else cap
-    d = ps.df
     n = len(d)
     if n > cap:
         idx = np.random.default_rng(0).choice(n, cap, replace=False)
@@ -79,8 +99,12 @@ def scatter_frame(ps, cap: int | None = None):
 
 
 def point_colours(d, color_by: str = "elevation",
-                  cmap: str = "terrain") -> np.ndarray:
-    """An (n, 4) uint8 RGBA colour per row."""
+                  cmap: str = "terrain", sessions=None) -> np.ndarray:
+    """An (n, 4) uint8 RGBA colour per row.
+
+    `sessions` is the full list of session names, so that session colours
+    stay fixed whichever of them are drawn.
+    """
     n = len(d)
     column = COLOR_BY.get(color_by, ELEV)
     if column == ELEV and ELEV not in d.columns:
@@ -98,14 +122,10 @@ def point_colours(d, color_by: str = "elevation",
         out[:, 3] = 200
         return out
     if column == SESSION:
-        import matplotlib
-
-        names = sorted(map(str, v.dropna().unique()))
-        index = {nm: i for i, nm in enumerate(names)}
-        table = (np.asarray(matplotlib.colormaps["tab10"].colors) * 255
-                 ).astype(np.uint8)
+        palette = session_palette(sessions if sessions is not None
+                                  else v.dropna().unique())
         for i, x in enumerate(v.astype(str)):
-            out[i, :3] = table[index.get(x, 0) % len(table)]
+            out[i, :3] = palette.get(x, OTHER_FIX)
         out[:, 3] = 200
         return out
 
@@ -131,13 +151,13 @@ def pack_points(state, color_by: str = "elevation",
     well under a millimetre across a lot, and the whole thing is a fraction
     of the size of the same numbers as JSON.
     """
-    ps = state.result
-    if ps is None or len(ps) == 0:
+    shown = drawn_points(state)
+    if shown is None or len(shown) == 0:
         return struct.pack("<II", 0, 0)
-    d, _ = scatter_frame(ps)
+    d, _ = scatter_frame(shown)
     x, y = state.site.to_local(d[E].to_numpy(), d[N].to_numpy())
-    rgba = point_colours(d, color_by, cmap)
-    return (struct.pack("<II", len(ps), len(d))
+    rgba = point_colours(d, color_by, cmap, sessions=state.sessions)
+    return (struct.pack("<II", len(shown), len(d))
             + np.asarray(x, "<f4").tobytes() + np.asarray(y, "<f4").tobytes()
             + rgba.tobytes())
 
@@ -155,9 +175,18 @@ def points_note(state) -> str:
     ps = state.result
     if ps is None or len(ps) == 0:
         return ""
+    shown = drawn_points(state)
+    n = len(shown)
     note = f"{len(ps):,} points"
-    if len(ps) > MAX_SCATTER:
-        note += f" (showing {MAX_SCATTER:,})"
+    if state.surface_from_shown and state.hiding:
+        total = len(state.sessions)
+        note += f" from {total - len(state.hiding)} of {total} sessions"
+    elif n < len(ps):
+        hidden = len(state.hiding)
+        note = (f"{n:,} of {len(ps):,} points - {hidden} "
+                f"session{'s' if hidden != 1 else ''} hidden")
+    if n > MAX_SCATTER:
+        note += f" (drawing {MAX_SCATTER:,})"
     return note
 
 
@@ -222,10 +251,11 @@ def surface_grid(surface, site, cmap: str = "terrain") -> dict:
     plot leaves as a hole - the same refusal to colour unsurveyed ground as
     the plan view.
     """
-    ny, nx = surface.z.shape
-    x0, y0 = site.to_local(surface.extent.xmin, surface.extent.ymin)
-    xs = (x0 + np.arange(nx) * surface.px).round(3)
-    ys = (y0 + np.arange(ny) * surface.px).round(3)
+    from .. import terrain
+
+    gx, gy = terrain.grid_axes(surface)
+    xs = np.asarray(site.to_local(gx, 0.0)[0]).round(3)
+    ys = np.asarray(site.to_local(0.0, gy)[1]).round(3)
     z = surface.z_masked
     finite = z[np.isfinite(z)]
     rows = [[None if not np.isfinite(v) else round(float(v), 4) for v in row]
@@ -279,3 +309,89 @@ def basemap_payload(state) -> list[dict]:
             "key": id(bm.layer),
         })
     return out
+
+
+# --- terrain overlays --------------------------------------------------------------
+# The same slope, drainage and contours as the printed maps (gpsrtk.io.figures),
+# drawn live on the plan view instead.
+
+SLOPE_CMAP = "magma_r"
+
+
+def slope_png(surface, slope_max_pct: float = 10.0, field=None) -> bytes:
+    """Slope in percent grade, north-up, unmeasured transparent."""
+    import matplotlib
+
+    from .. import terrain
+
+    field = field or terrain.slope(surface)
+    pct = field.slope_pct
+    norm = np.clip(np.nan_to_num(pct, nan=0.0) / max(slope_max_pct, 1e-6), 0, 1)
+    rgba = (matplotlib.colormaps[SLOPE_CMAP](norm) * 255).astype(np.uint8)
+    rgba[..., 3] = np.where(np.isfinite(pct), 255, 0)
+    return _png(np.flipud(rgba))
+
+
+def contours_payload(surface, site, interval_m: float) -> dict:
+    """Contour polylines in local metres, labelled in cm above the low point."""
+    from .. import terrain
+
+    levels = []
+    for lv in terrain.contours(surface, interval_m):
+        lines = []
+        for line in lv.lines:
+            x, y = site.to_local(line[:, 0], line[:, 1])
+            lines.append(np.column_stack([x, y]).round(3).tolist())
+        levels.append({"cm": round(lv.above_low_m * 100.0, 3),
+                       "major": lv.major, "lines": lines})
+    low, _ = terrain.relief(surface)
+    return {"interval_cm": interval_m * 100.0, "low_m": low, "levels": levels}
+
+
+def drainage_payload(surface, site, spacing_m: float, field=None) -> dict:
+    """Downhill arrows: [x, y, down_e, down_n, slope %] in local metres."""
+    from .. import terrain
+
+    arrows = terrain.drainage_arrows(surface, spacing_m, field)
+    out = []
+    for a in arrows:
+        x, y = site.to_local(a.e, a.n)
+        out.append([round(float(x), 3), round(float(y), 3), round(a.down_e, 4),
+                    round(a.down_n, 4), round(a.slope_pct, 2)])
+    return {"spacing_m": spacing_m, "arrows": out}
+
+
+def terrain_payload(state, field=None) -> dict | None:
+    """Numbers the plan view's legend and the terrain controls need."""
+    from .. import terrain
+    from ..units import m_to_ft
+
+    s = state.surface
+    if s is None:
+        return None
+    field = field or terrain.slope(s)
+    low, high = terrain.relief(s)
+    measured = s.z[~s.mask]
+    lo, hi = (np.percentile(measured, [0.5, 99.5]) if measured.size
+              else (low, high))
+    v = state.site.vertical
+    if s.z_column != ELEV:
+        datum = "raw ellipsoidal"
+    elif v.tied_to_model:
+        datum = f"tied to {v.model_frame}"
+    else:
+        datum = "local datum"
+    return {
+        "relief_cm": (high - low) * 100.0,
+        "mapped_m2": terrain.mapped_area_m2(s),
+        "slope": field.stats(),
+        # The elevation colours span these heights (the percentile clip the
+        # surface image uses), so the legend can say what they mean.
+        "elevation": {"lo_ft": m_to_ft(float(lo)), "hi_ft": m_to_ft(float(hi)),
+                      "datum": datum},
+    }
+
+
+def legend_scales(n: int = 11) -> dict:
+    """Colour stops for every colour map the plan view can show."""
+    return {name: colorscale(name, n) for name in [*COLORMAPS, SLOPE_CMAP]}

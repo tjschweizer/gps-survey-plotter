@@ -15,9 +15,10 @@ so they agree with each other far better than either agrees with the truth.
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
 from scipy.spatial import cKDTree
 
-from .model.pointset import PointSet, E, N, Z, TIME
+from .model.pointset import PointSet, E, N, Z, TIME, SESSION
 
 
 def crossover_pairs(ps: PointSet, radius_m: float = 0.30,
@@ -60,10 +61,9 @@ def crossover_diffs(ps: PointSet, radius_m: float = 0.30,
     return z[pairs[:, 0]] - z[pairs[:, 1]]
 
 
-def crossover_stats(ps: PointSet, radius_m: float = 0.30,
-                    min_seconds: float = 60.0, column: str = Z) -> dict:
-    """Summary of crossover disagreement. All lengths in metres."""
-    dz = crossover_diffs(ps, radius_m, min_seconds, column)
+def summarise(dz: np.ndarray) -> dict:
+    """RMS, median and p95 of absolute differences, and their mean. Metres."""
+    dz = np.asarray(dz, dtype=float)
     if len(dz) == 0:
         return {"n": 0}
     a = np.abs(dz)
@@ -74,6 +74,66 @@ def crossover_stats(ps: PointSet, radius_m: float = 0.30,
         "p95_abs": float(np.percentile(a, 95)),
         "bias": float(np.mean(dz)),
     }
+
+
+def crossover_stats(ps: PointSet, radius_m: float = 0.30,
+                    min_seconds: float = 60.0, column: str = Z) -> dict:
+    """Summary of crossover disagreement. All lengths in metres."""
+    return summarise(crossover_diffs(ps, radius_m, min_seconds, column))
+
+
+def session_crossovers(ps: PointSet, radius_m: float = 0.30,
+                       min_seconds: float = 60.0, column: str = Z) -> dict:
+    """Crossover residuals split by acquisition session.
+
+    Pooling every outing into one RMS hides which outing is good and which
+    is not. Split, the same pairs answer two different questions:
+
+      within   pairs from one session measure that outing's repeatability -
+               the number to compare outings by. The sign of each difference
+               depends only on pair order, so the mean means nothing here.
+      between  pairs from two sessions measure how far apart the outings sit.
+               The mean is the offset between them (the later-named minus the
+               earlier-named); the scatter about the mean says how well one
+               constant describes it.
+
+    Rows with no height in `column` are left out: a laser rod shot has no
+    GNSS height and can never be half of a crossover.
+    """
+    out: dict = {"within": {}, "between": {}}
+    d = ps.df
+    if SESSION not in d.columns or len(d) < 2:
+        return out
+    if column in d.columns:
+        ps = ps.select(np.isfinite(d[column].to_numpy(dtype=float)), f"has {column}")
+        d = ps.df
+    names = d[SESSION].astype(str).to_numpy()
+    for name in sorted(set(names)):
+        out["within"][name] = {"n": 0}
+    if len(d) < 2 or column not in d.columns:
+        return out
+
+    pairs = crossover_pairs(ps, radius_m, min_seconds)
+    if len(pairs) == 0:
+        return out
+    z = d[column].to_numpy(dtype=float)
+    i, j = pairs[:, 0], pairs[:, 1]
+    same = names[i] == names[j]
+
+    for name in out["within"]:
+        m = same & (names[i] == name)
+        out["within"][name] = summarise(z[i[m]] - z[j[m]])
+
+    cross = ~same
+    first_is_i = names[i] < names[j]
+    lo = np.where(first_is_i, i, j)[cross]
+    hi = np.where(first_is_i, j, i)[cross]
+    frame = pd.DataFrame({"a": names[lo], "b": names[hi], "dz": z[hi] - z[lo]})
+    for (a, b), part in frame.groupby(["a", "b"], sort=True):
+        stats = summarise(part["dz"].to_numpy())
+        stats["scatter"] = float(part["dz"].std(ddof=0))
+        out["between"][(str(a), str(b))] = stats
+    return out
 
 
 def format_stats(s: dict, unit: str = "cm") -> str:
