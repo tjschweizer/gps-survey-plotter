@@ -189,6 +189,20 @@ def test_custom_attributes_reach_their_canonical_columns(swmz):
     assert d[P.ROD_IN].iloc[0] == pytest.approx(41.5)
 
 
+def test_the_type_attribute_is_normalised(tmp_path):
+    """"Lawn " typed on the phone is the same kind as "lawn"."""
+    db = _db(tmp_path / "typed.swm2", features=True, attributes=True)
+    con = sqlite3.connect(db)
+    con.execute("INSERT INTO attribute_fields VALUES "
+                "('typ','lyr','type','text','',1)")
+    con.execute("INSERT INTO attribute_values VALUES "
+                "('f1','typ','text',' Lawn ')")
+    con.commit()
+    con.close()
+    d = read_any(db)["spot_heights"].df
+    assert d[P.KIND].iloc[0] == "lawn"
+
+
 def test_the_raw_log_is_reported_but_not_parsed(swmz):
     exp = read_any(swmz)
     assert "raw_logs" in exp.tables

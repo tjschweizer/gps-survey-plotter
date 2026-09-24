@@ -89,9 +89,21 @@ These were set by the owner and apply to every item.
 |---|---|---|
 | Review baseline, at `2bb8665` | 282 passed, 55 skipped, 35 deselected | 35 passed (with the Chromium path set) |
 | After C5, C4, C9 | 285 passed, 55 skipped, 35 deselected | not re-run (no UI change yet) |
+| Desktop baseline (Windows, `12a34e0`) | 285 passed, 50 skipped, 40 deselected | 35 passed |
+| After C8 | 287 passed, 50 skipped, 40 deselected | — |
 
 Of the 55 skips, 50 need real data. The other 5 are network tests that the
 sandbox proxy refused.
+
+On the desktop (Windows, checkout at `C:\tmp\gps-survey-plotter`, not under
+OneDrive) the non-browser run is
+`uv run pytest -m "not browser and not network"` with
+`UV_PROJECT_ENVIRONMENT=%USERPROFILE%\.venvs\gps-rtk`. The 50 skips there are
+all real-data tests: `archive/` is not present on that machine either. The
+browser tests ran against the installed Chrome, with
+`YARDSURVEY_CHROMIUM=C:/Program Files/Google/Chrome/Application/chrome.exe`,
+so no Playwright download was needed. Git has no identity configured there;
+commits pass `-c user.name=Claude -c user.email=noreply@anthropic.com`.
 
 ---
 
@@ -129,7 +141,7 @@ These answers change the designs in section 5.
 | 1 | C5 | Despike ignores missing heights | processing | ✅ `c9a4330` |
 | 2 | C4 | A non-survey file leaves the session alone | code health | ✅ `8e43c58` |
 | 3 | C9 | Layer names come from the files inside the export | code health | ✅ `02a7c76` |
-| 4 | C8 | Normalise the `type` attribute | processing | todo |
+| 4 | C8 | Normalise the `type` attribute | processing | ✅ |
 | 5 | C11 | Correct daylight-saving times for `.swmz` | processing | todo |
 | 6 | C12 | Instrument height guard | processing | todo |
 | 7 | C7 | Rod entry guard: feet, inches and fractions | workflow | todo |
@@ -212,7 +224,10 @@ the review session's scratchpad.
 
 ### Import and processing
 
-**C8 — Normalise the `type` attribute**
+**C8 — Normalise the `type` attribute** ✅
+- **Done:** `io/base.py` `normalise_kind`, called by both readers. Tests:
+  `test_merge.py::test_the_type_attribute_is_normalised`,
+  `test_swmz.py::test_the_type_attribute_is_normalised`.
 - **What:** both readers (`io/swmaps.py` `normalise`, and
   `io/swmaps_project.py` after the attribute join) strip whitespace from
   `KIND` and lower-case it.
@@ -871,3 +886,12 @@ The owner wants this later; do not implement it now.
 - **Open question:** what the rover will log (PX4 ulog, NMEA from the Pi, or
   SW Maps on a phone). The answer decides whether an import path comes later.
   Reading ulog would need a new dependency, so ask first.
+
+---
+
+## 8. New findings (not fixed)
+
+Things noticed while implementing, recorded rather than fixed, per the
+ground rules.
+
+- (none yet)

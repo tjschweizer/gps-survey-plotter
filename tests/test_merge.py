@@ -230,6 +230,26 @@ def test_a_renamed_export_keeps_its_layer_names(tmp_path, synthetic_zip):
     assert exp["track_points"].df[P.SESSION].iloc[0].startswith("Synthetic Yard (1)/")
 
 
+def test_the_type_attribute_is_normalised(tmp_path):
+    """`type` is typed by hand, and everything downstream matches it
+    exactly. "Lawn " must arrive as "lawn", or the level network never sees
+    the shot."""
+    import zipfile
+
+    from synthetic import spot_rows, track_points
+
+    from gpsrtk.io import read_any
+
+    spots = spot_rows()
+    spots["type"] = ["Lawn ", " LAWN", "lawn", "Bldg"] + ["lawn"] * (len(spots) - 4)
+    path = tmp_path / "Typed.zip"
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("Typed_TRACK_POINTS.csv", track_points().head(50).to_csv(index=False))
+        z.writestr("Typed_spots.csv", spots.to_csv(index=False))
+    kinds = read_any(path)["spots"].df[P.KIND]
+    assert list(kinds[:4]) == ["lawn", "lawn", "lawn", "bldg"]
+
+
 def test_opening_replaces_rather_than_merges(fresh, synthetic_zip, synthetic_outing2):
     fresh.load(synthetic_zip)
     n = len(fresh.layers["track_points"])

@@ -103,6 +103,16 @@ def parse_time(s: pd.Series) -> tuple[pd.Series, pd.Series]:
     return t, tz
 
 
+def normalise_kind(s: pd.Series) -> pd.Series:
+    """The `type` attribute, stripped of whitespace and lower-cased.
+
+    It is typed by hand on a phone, and everything downstream matches it
+    exactly: `KindSelect`, and the level network's choice of terrain shots.
+    "Lawn" or "lawn " used to drop out of both without a word.
+    """
+    return s.map(lambda v: v.strip().lower() if isinstance(v, str) else v)
+
+
 def numeric(df: pd.DataFrame, cols) -> None:
     """Coerce columns to numeric in place, leaving unparseable values as NaN."""
     for c in cols:

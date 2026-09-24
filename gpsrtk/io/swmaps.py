@@ -32,7 +32,8 @@ from ..model.pointset import (
     PDOP, HDOP, VDOP, SATS_VIEW, SATS_USED, ANT_HT, ROD_IN, SETUP, KIND,
     TRACK, SOURCE, SESSION,
 )
-from .base import SurveyExport, SurveyReader, register_reader, numeric, parse_time
+from .base import (SurveyExport, SurveyReader, register_reader, normalise_kind,
+                   numeric, parse_time)
 
 # export column -> canonical name
 ALIASES = {
@@ -107,6 +108,8 @@ def normalise(raw: pd.DataFrame, source: str, session: str) -> pd.DataFrame:
     numeric(df, NUMERIC_COLS)
     if "point_id" in df.columns:
         df["point_id"] = df["point_id"].astype("Int64")
+    if KIND in df.columns:
+        df[KIND] = normalise_kind(df[KIND])
 
     df[SOURCE] = source
     df[SESSION] = assign_sessions(df, session)

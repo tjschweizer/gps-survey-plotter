@@ -49,7 +49,8 @@ from ..model.pointset import (
     N, PDOP, REF_STATION, ROD_IN, SATS_USED, SATS_VIEW, SESSION, SETUP, SOURCE,
     SPEED, TIME, TRACK, TZ, VACC, VDOP, Z, PointSet,
 )
-from .base import SurveyExport, SurveyReader, numeric, register_reader
+from .base import (SurveyExport, SurveyReader, normalise_kind, numeric,
+                   register_reader)
 from .swmaps import assign_sessions
 
 SUFFIXES = (".swmz", ".swm2")
@@ -316,6 +317,8 @@ def _finish(points: pd.DataFrame, labels: dict, attrs: pd.DataFrame,
             joined = joined.drop(columns=missing).join(attrs[missing], on="uuid")
         df = joined
         numeric(df, (ROD_IN, SETUP))
+        if KIND in df.columns:
+            df[KIND] = normalise_kind(df[KIND])
 
     df[E], df[N] = _project(df[LAT], df[LON])
     df[SOURCE] = source
