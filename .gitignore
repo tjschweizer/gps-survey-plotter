@@ -1,0 +1,20 @@
+.venv/
+cache/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+out/
+
+# --- survey data and anything that locates a property --------------------
+# A single point from a survey pins the property to the centimetre, and git
+# history is permanent. Keep all of it local.
+archive/
+site.local.json
+*.yardproj
+*.yardplan
+*.swmz
+*.swm2
+*.zip
+field_sheet.html
+*_ORIGIN.txt
