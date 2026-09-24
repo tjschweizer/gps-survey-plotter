@@ -221,11 +221,18 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); margi
 #plan-table .tabulator-row.tabulator-selected { background: #bcd4f4; }
 #plan-table .tabulator-row.tabulator-selected:hover { background: #a9c6ee; }
 #plan-table .tabulator-cell.tabulator-editing { background: #fff; }
+/* The placeholder spans every column, most of them scrolled out of view, so
+   it is pinned to the visible left edge rather than centred across them. */
+#plan-table .tabulator-placeholder { justify-content: flex-start; }
 #plan-table .tabulator-placeholder .tabulator-placeholder-contents {
   font: 12px/1.4 var(--ui);
   color: var(--muted);
   white-space: normal;
+  text-align: left;
   padding: 16px;
+  position: sticky;
+  left: 0;
+  max-width: 320px;
 }
 .coverage { font-weight: 600; }
 .detail-result { white-space: pre-wrap; }

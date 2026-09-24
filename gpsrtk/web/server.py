@@ -912,10 +912,20 @@ def _zip_dir(folder: str | Path) -> bytes:
 
 
 def _free_port(preferred: int) -> int:
+    """The preferred port if it can be had, otherwise any free one.
+
+    The probe sets SO_REUSEADDR where the server's own socket will (asyncio
+    does on POSIX), so a port left in TIME_WAIT by the previous run is not
+    mistaken for busy - which would move the app to a random port on every
+    quick restart. Not on Windows, where the option would let the probe
+    take a port another process is actually listening on.
+    """
     import socket
 
     for port in (preferred, 0):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            if os.name != "nt":
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             try:
                 s.bind(("127.0.0.1", port))
                 return s.getsockname()[1]
@@ -936,8 +946,8 @@ def main(argv: list[str] | None = None) -> int:
                     "Starts a local server and opens it in the browser.")
     parser.add_argument("export", nargs="?", help="survey export to open")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT,
-                        help=f"port on 127.0.0.1 (default {DEFAULT_PORT}; the "
-                             "next free one if that is taken)")
+                        help=f"port on 127.0.0.1 (default {DEFAULT_PORT}; any "
+                             "free port if that one is taken)")
     parser.add_argument("--no-browser", action="store_true",
                         help="do not open a browser window")
     args = parser.parse_args(sys.argv[1:] if argv is None else argv)
