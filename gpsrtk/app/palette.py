@@ -37,7 +37,6 @@ def colorize(z: np.ndarray, cmap: str = "terrain",
              vert_exag: float = 4.0) -> np.ndarray:
     """RGBA image for a height grid. Masked cells come back fully transparent."""
     import matplotlib
-    import matplotlib.pyplot as plt
     from matplotlib.colors import LightSource
 
     filled = np.where(np.isfinite(z), z, np.nanmin(z) if np.isfinite(z).any() else 0.0)

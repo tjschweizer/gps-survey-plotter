@@ -1,0 +1,258 @@
+// Drawing and editing a shot plan on the plan view.
+//
+// Division of labour, chosen deliberately: the MAP edits position, the TABLE
+// edits everything else. Clicking a marker selects its row, because finding
+// row 47 of a table by eye when you can see the shot on the aerial is silly.
+//
+// A marker is drawn at the point's BEST KNOWN position. Once a shot has been
+// measured it becomes a square and stops being draggable - dragging it would
+// edit the planned position, which is no longer what you are looking at. A
+// faint leader runs back to the original click: that gap is the error in the
+// plan, and where the plan was clicked off an aerial it is also a direct
+// reading of how far that aerial is out.
+
+import { map } from "./map2d.js";
+import { store, subscribe, changed, planMode, setPlanMode, onPlanMode,
+         onSelection, requests } from "./store.js";
+import { act } from "./api.js";
+
+// Coloured by purpose GROUP: terrain, built feature, or control. Individual
+// purposes are far too numerous to distinguish by colour legibly.
+const GROUP_PEN = { terrain: [192, 57, 43], feature: [31, 95, 168], control: [43, 122, 61] };
+const SELECTED = [255, 190, 0];
+const SETUP = [230, 126, 34];
+const LEADER = [110, 110, 110];
+const rgba = (c, a = 1) => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
+
+let highlighted = null;
+
+// --- layers -------------------------------------------------------------------
+
+const leaderSource = new ol.source.Vector();
+map.addLayer(new ol.layer.Vector({
+  source: leaderSource, zIndex: 140,
+  style: new ol.style.Style({
+    stroke: new ol.style.Stroke({ color: rgba(LEADER), width: 1, lineDash: [2, 3] }),
+  }),
+}));
+
+const lineSource = new ol.source.Vector();
+map.addLayer(new ol.layer.Vector({
+  source: lineSource, zIndex: 150, updateWhileInteracting: true,
+  style: new ol.style.Style({
+    stroke: new ol.style.Stroke({ color: rgba(GROUP_PEN.terrain), width: 2.2, lineDash: [8, 5] }),
+  }),
+}));
+
+const setupSource = new ol.source.Vector();
+map.addLayer(new ol.layer.Vector({
+  source: setupSource, zIndex: 155,
+  style: (f) => new ol.style.Style({
+    image: new ol.style.RegularShape({
+      points: 3, radius: 9.5,
+      fill: new ol.style.Fill({ color: rgba(SETUP, 220 / 255) }),
+      stroke: new ol.style.Stroke({ color: "#000", width: 1.2 }),
+    }),
+    text: new ol.style.Text({
+      text: f.get("name"), offsetY: 16, font: "600 11px system-ui, sans-serif",
+      fill: new ol.style.Fill({ color: "#5a3000" }),
+      stroke: new ol.style.Stroke({ color: "rgba(255,255,255,0.9)", width: 3 }),
+    }),
+  }),
+}));
+
+const markerStyles = new Map();
+function markerStyle(feature) {
+  const number = feature.get("number");
+  const locked = feature.get("locked");
+  const chosen = number === highlighted;
+  const key = `${number}|${locked}|${feature.get("group")}|${chosen}`;
+  let style = markerStyles.get(key);
+  if (style) return style;
+
+  const colour = chosen ? SELECTED : (GROUP_PEN[feature.get("group")] ?? GROUP_PEN.terrain);
+  const stroke = new ol.style.Stroke({ color: rgba(colour), width: chosen ? 3 : 2 });
+  // A measured marker is filled solidly: it is a fact, not a proposal.
+  const alpha = locked ? (chosen ? 150 : 110) : (chosen ? 90 : 40);
+  const fill = new ol.style.Fill({ color: rgba(colour, alpha / 255) });
+  // Square for measured, circle for planned. Colour is already carrying the
+  // purpose group, so shape is what is left to say surveyed or guessed.
+  const image = locked
+    ? new ol.style.RegularShape({ points: 4, radius: 7.5, angle: Math.PI / 4, stroke, fill })
+    : new ol.style.Circle({ radius: 5.5, stroke, fill });
+  style = new ol.style.Style({
+    image,
+    zIndex: chosen ? 2 : 1,
+    text: new ol.style.Text({
+      text: String(number), offsetX: 11, offsetY: -11,
+      font: "600 12px system-ui, sans-serif",
+      fill: new ol.style.Fill({ color: "#111" }),
+      stroke: new ol.style.Stroke({ color: "rgba(255,255,255,0.9)", width: 3 }),
+    }),
+  });
+  markerStyles.set(key, style);
+  return style;
+}
+
+export const markerSource = new ol.source.Vector();
+const markerLayer = new ol.layer.Vector({
+  source: markerSource, zIndex: 160, style: markerStyle, updateWhileInteracting: true,
+});
+map.addLayer(markerLayer);
+
+// --- drawing from the snapshot -------------------------------------------------------
+
+function rebuild(plan) {
+  markerSource.clear(true);
+  markerSource.addFeatures(plan.points.map((p) => new ol.Feature({
+    geometry: new ol.geom.Point([p.x, p.y]),
+    number: p.number, locked: p.locked, group: p.group, tooltip: p.tooltip,
+  })));
+  lineSource.clear(true);
+  lineSource.addFeatures(plan.lines.filter((ln) => ln.xy.length > 1).map((ln) => new ol.Feature({
+    geometry: new ol.geom.LineString(ln.xy), line_id: ln.line_id, numbers: ln.numbers,
+    closed: ln.closed,
+  })));
+  setupSource.clear(true);
+  setupSource.addFeatures(plan.setups.map((s) => new ol.Feature({
+    geometry: new ol.geom.Point([s.x, s.y]), name: s.name,
+  })));
+  leaderSource.clear(true);
+  if (plan.leaders.length) {
+    leaderSource.addFeature(new ol.Feature(new ol.geom.MultiLineString(plan.leaders)));
+  }
+}
+
+subscribe((state, prev) => {
+  if (changed(state, prev, "plan", "site")) rebuild(state.plan);
+});
+
+onSelection((numbers) => {
+  // The map highlights one point; with several rows selected there is
+  // nothing sensible to highlight, so it clears.
+  highlighted = numbers.length === 1 ? numbers[0] : null;
+  markerLayer.changed();
+});
+
+export function markerAt(pixel) {
+  return map.forEachFeatureAtPixel(pixel, (f) => f,
+    { layerFilter: (layer) => layer === markerLayer, hitTolerance: 4 }) ?? null;
+}
+
+// --- dragging a planned mark -----------------------------------------------------------
+
+// Dragging markers while placing new ones is maddening, so they only move in
+// Navigate - and a measured point never moves, whatever the mode.
+const translate = new ol.interaction.Translate({
+  layers: [markerLayer],
+  filter: (f) => planMode() === "navigate" && !f.get("locked"),
+  hitTolerance: 4,
+});
+map.addInteraction(translate);
+
+let dragStart = null;
+translate.on("translatestart", (e) => {
+  const f = e.features.item(0);
+  dragStart = f ? f.getGeometry().getCoordinates().slice() : null;
+});
+translate.on("translating", (e) => {
+  // Keep the break lines attached while the vertex moves.
+  const f = e.features.item(0);
+  if (!f) return;
+  const number = f.get("number");
+  const [x, y] = f.getGeometry().getCoordinates();
+  for (const line of lineSource.getFeatures()) {
+    const numbers = line.get("numbers");
+    if (!numbers.includes(number)) continue;
+    const coords = line.getGeometry().getCoordinates();
+    const drawn = numbers.filter((n) => store.state.plan.points.some((p) => p.number === n));
+    drawn.forEach((n, i) => { if (n === number) coords[i] = [x, y]; });
+    if (line.get("closed") && coords.length > drawn.length) coords[coords.length - 1] = coords[0];
+    line.getGeometry().setCoordinates(coords);
+  }
+});
+translate.on("translateend", async (e) => {
+  const f = e.features.item(0);
+  if (!f || !dragStart) return;
+  const [x, y] = f.getGeometry().getCoordinates();
+  const moved = Math.hypot(x - dragStart[0], y - dragStart[1]) > 1e-6;
+  dragStart = null;
+  if (!moved) return;                 // a click, not a drag
+  const number = f.get("number");
+  const reply = await act("/api/plan/point/move", { number, x, y });
+  if (!reply) rebuild(store.state.plan);        // refused: put it back
+  requests.select(number);
+});
+
+// --- drawing a break line --------------------------------------------------------------
+
+const draw = new ol.interaction.Draw({
+  type: "LineString",
+  style: new ol.style.Style({
+    stroke: new ol.style.Stroke({ color: rgba(SELECTED), width: 2, lineDash: [6, 4] }),
+    image: new ol.style.Circle({ radius: 4, fill: new ol.style.Fill({ color: rgba(SELECTED) }) }),
+  }),
+});
+draw.on("drawend", (e) => {
+  const vertices = e.feature.getGeometry().getCoordinates();
+  // The server ignores fewer than two vertices: a stray click is not a line.
+  act("/api/plan/line/add", { vertices });
+});
+
+export function cancelLine() {
+  draw.abortDrawing();
+}
+
+onPlanMode((mode, previous) => {
+  if (previous === "add_line") {
+    // Leaving the tool commits what was drawn, as long as it is a line.
+    draw.finishDrawing();
+    map.removeInteraction(draw);
+  }
+  if (mode === "add_line") map.addInteraction(draw);
+  translate.setActive(mode === "navigate");
+  map.getTargetElement().classList.toggle("placing", mode !== "navigate");
+  hideTip();
+});
+
+// --- clicking --------------------------------------------------------------------------
+
+map.on("click", async (e) => {
+  const mode = planMode();
+  if (mode === "navigate") {
+    const hit = markerAt(e.pixel);
+    if (hit) requests.select(hit.get("number"));
+    return;
+  }
+  const [x, y] = e.coordinate;
+  if (mode === "add_point") {
+    const reply = await act("/api/plan/point/add", { x, y });
+    if (reply?.selected != null) requests.select(reply.selected);
+  } else if (mode === "add_setup") {
+    await act("/api/plan/setup/add", { x, y });
+    setPlanMode("navigate");
+  }
+});
+
+// --- hover ------------------------------------------------------------------------------
+
+const tip = document.getElementById("map-tip");
+function hideTip() { tip.hidden = true; }
+
+map.on("pointermove", (e) => {
+  const target = map.getTargetElement();
+  if (e.dragging || planMode() !== "navigate") {
+    target.classList.remove("over-marker", "draggable");
+    hideTip();
+    return;
+  }
+  const hit = markerAt(e.pixel);
+  target.classList.toggle("over-marker", !!hit);
+  target.classList.toggle("draggable", !!hit && !hit.get("locked"));
+  if (!hit) { hideTip(); return; }
+  tip.textContent = hit.get("tooltip");
+  tip.style.left = `${target.offsetLeft + e.pixel[0] + 14}px`;
+  tip.style.top = `${target.offsetTop + e.pixel[1] + 14}px`;
+  tip.hidden = false;
+});
+map.getViewport().addEventListener("mouseleave", hideTip);

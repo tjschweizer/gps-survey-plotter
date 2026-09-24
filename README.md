@@ -10,19 +10,70 @@ that this code is built to preserve.
 yardsurvey "archive\Project 1.zip"
 ```
 
-Omit the path to start empty and use File ▸ Open export.
+This starts a small server on this machine and opens it in your browser, at
+`http://127.0.0.1:8765/` (or another free port if that one is taken - the
+console says which). Omit the path to start empty and use **File ▸ Open
+export**. `--no-browser` starts the server without opening a tab, and
+`--port` picks another port. **File ▸ Quit** or Ctrl+C in the console stops
+it; closing the tab does not.
 
 Typical session: open an export, **Data ▸ Fetch all basemaps**, tune the
 filter stack, **Datum ▸ Solve local datum**, then **File ▸ Save project**.
 
+## The browser UI
+
+The window is the one the desktop app had, in a browser tab: the same menus
+and shortcuts, layers and the filter stack on the left, the plan view and a
+3D tab in the middle with the measured QC underneath, and the basemaps, the
+shot plan and the vertical datum on the right. The docks and the QC pane
+resize by dragging their edges.
+
+A few things work differently because it is a web page:
+
+- **Files are still local paths.** The file dialogs list folders on this
+  machine, through the server. A project records its exports by path -
+  relative to the project file when they sit under it - and an upload would
+  only have handed over a copy. Nothing is uploaded anywhere.
+- **Exports download.** **Export ▸ Heightmap raster** and **Export ▸ Revit
+  points file** arrive as zips in the browser's download folder: the 16-bit
+  heightmap with its mask, world file and preview; the points file with its
+  `_ORIGIN.txt` sidecar. **Plan ▸ Print field sheet** opens the sheet in a
+  new tab to print, still self-contained for use without a network.
+- **Esc** puts a drawing tool down, and **Delete** in the shot-plan table
+  deletes the selected rows. In the table, the first click on a row selects
+  it and a click on a selected row edits the cell; Shift and Ctrl extend the
+  selection.
+
+The server only listens on `127.0.0.1`. A single point from a survey pins a
+property to the centimetre, so the coordinates are never served to the
+network, and the server also refuses requests that did not come from its own
+page: a web page open in another tab cannot drive it to open or overwrite
+files.
+
+How it is put together: `gpsrtk.app` holds the application - the state, the
+rules for editing a shot plan, the text of every report - as plain Python
+that knows nothing about how it is displayed. `gpsrtk.web` exposes it over
+HTTP and serves the page. The page has no build step: OpenLayers (plan view),
+Plotly (3D) and Tabulator (the readings table) are committed under
+`gpsrtk/web/static/vendor`, which says which versions and how to update them.
+There is no `node_modules`, for the same OneDrive reason the virtual
+environment lives elsewhere.
+
 ## Running the tests
 
-    uv run python -m pytest
+    uv run pytest
 
-Around 100 tests run anywhere. The rest need a survey export to work from and
-skip without one, because the numbers they pin are measured facts about real
-ground rather than properties of the code. Point `tests/conftest.py` at an
-export of your own to run them.
+About 265 tests run anywhere, most of them against a small synthetic export
+(`tests/synthetic.py`) written to look like a SW Maps export of a mowed lot.
+Around 50 more need a real survey export and skip without one, because the
+numbers they pin are measured facts about real ground rather than properties
+of the code. Point `tests/conftest.py` at an export of your own to run them.
+
+`tests/test_web_browser.py` drives the page in Chromium with Playwright. It
+needs a browser Playwright can launch - `uv run playwright install chromium`
+once - or `YARDSURVEY_CHROMIUM` pointing at an existing Chromium binary, and
+skips with instructions otherwise. `-m browser` runs just those; `-m "not
+browser"` leaves them out.
 
 Network tests are deselected by default; `-m network` runs them.
 
@@ -30,8 +81,9 @@ Network tests are deselected by default; `-m network` runs them.
 
 Everything is relative to a *site*: a CRS, a local origin snapped to a 25 m
 grid, and a vertical datum. There are no site constants in the source. A fresh
-window opens on `site.local.json` if there is one and on a public example
-otherwise, and a project file carries its own site regardless.
+session opens on `site.local.json` in the folder it was started from if there
+is one, and on a public example otherwise, and a project file carries its own
+site regardless.
 
     from gpsrtk.site import Site
     Site.from_seed("my lot", 41.591087, -93.603278).save("site.local.json")
@@ -203,7 +255,15 @@ criteria: if they move, that is a regression unless CLAUDE.md is updated too.
         adjust.py   least-squares engine shared by the network and the offsets
       io/           readers, imagery/vector providers, exporters
       filters/      serialisable filter chain
-      ui/           PySide6 app
+      app/          the application, with no GUI
+        state.py      what is loaded, filtered, solved and fetched
+        plan_edit.py  the rules behind the shot-plan table and map
+        report.py     every readout and notice, as text
+        views.py      what the plan and 3D views draw
+      web/          the browser UI
+        server.py     local HTTP server over gpsrtk.app
+        files.py      folder listings for the file dialogs
+        static/       the page: index.html, css/, js/, vendor/
 
 ## The vertical model
 
@@ -264,10 +324,6 @@ A service can return HTTP 200 with a valid but empty tile when an area has not
 been flown. That is detected by counting distinct pixel values, not variance: a
 1 m DEM over 1.2 m of relief is legitimately near-uniform and must not be
 mistaken for no coverage.
-
-Parcel polygons are cartographic (±1–3 ft), drawn dashed and labelled
-REFERENCE ONLY. An authoritative boundary needs a plat traverse from a monument
-shot with RTK; this tool does not pretend to provide one.
 
 Parcel polygons are cartographic (±1–3 ft), drawn dashed and labelled
 REFERENCE ONLY. An authoritative boundary needs a plat traverse from a monument

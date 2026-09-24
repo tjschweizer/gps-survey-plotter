@@ -1,2 +1,5 @@
 * text=auto eol=lf
 *.cmd text eol=crlf
+
+# Third-party browser libraries, committed as published. Not ours to diff.
+gpsrtk/web/static/vendor/*/** linguist-vendored -diff

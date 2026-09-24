@@ -6,26 +6,16 @@ a re-solve against slightly different inputs would drift silently.
 """
 
 import json
-import os
+import unittest.mock as mock
 
 import numpy as np
 import pytest
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-pytest.importorskip("PySide6")
-
-from PySide6.QtWidgets import QApplication, QMessageBox      # noqa: E402
-
-from gpsrtk.io.imagery import NoCoverageError, RasterLayer   # noqa: E402
-from gpsrtk.model import pointset as P                       # noqa: E402
-from gpsrtk.project import SUFFIX, BasemapState, Project     # noqa: E402
-from gpsrtk.site import example_site                            # noqa: E402
-from gpsrtk.surface import Extent                            # noqa: E402
-
-
-@pytest.fixture(scope="module")
-def app():
-    return QApplication.instance() or QApplication([])
+from gpsrtk.app import AppState, report, views
+from gpsrtk.io.imagery import NoCoverageError, RasterLayer
+from gpsrtk.model import pointset as P
+from gpsrtk.project import SUFFIX, BasemapState, Project
+from gpsrtk.site import example_site
 
 
 class StubProvider:
@@ -53,33 +43,28 @@ class StubProvider:
             attribution=self.attribution)
 
 
+STUBS = {
+    "photo-a": (StubProvider("photo-a"), False),
+    "photo-b": (StubProvider("photo-b"), False),
+    "blank-one": (StubProvider("blank-one", outcome="blank"), False),
+    "broken-one": (StubProvider("broken-one", outcome="boom"), False),
+    "terrain-a": (StubProvider("terrain-a", terrain=True), True),
+}
+
+
 @pytest.fixture
-def window(app, export, monkeypatch, tmp_path):
-    from gpsrtk.ui.main import MainWindow
-
-    for name in ("information", "warning", "critical"):
-        monkeypatch.setattr(QMessageBox, name,
-                            staticmethod(lambda *a, **k: QMessageBox.Ok))
-
-    stubs = {
-        "photo-a": (StubProvider("photo-a"), False),
-        "photo-b": (StubProvider("photo-b"), False),
-        "blank-one": (StubProvider("blank-one", outcome="blank"), False),
-        "broken-one": (StubProvider("broken-one", outcome="boom"), False),
-        "terrain-a": (StubProvider("terrain-a", terrain=True), True),
-    }
-
-    win = MainWindow()
-    win.state.cache_dir = tmp_path / "cache"
-    monkeypatch.setattr(win.state, "all_providers", lambda: stubs)
-    win.state.load(str(export.source_path))
-    yield win
-    win.view3d.close_plotter()
+def stubbed(state, monkeypatch):
+    """The loaded synthetic export, with imagery that never leaves the machine."""
+    monkeypatch.setattr(state, "all_providers", lambda: STUBS)
+    return state
 
 
-def _path_exists(s):
-    from pathlib import Path
-    return Path(s).exists()
+def _reopen(state, saved):
+    """Open a saved project in a second state, with the same stub providers."""
+    other = AppState(site=example_site(), cache_dir=state.cache_dir)
+    with mock.patch.object(AppState, "all_providers", lambda self: STUBS):
+        project, warnings = other.load_project(saved)
+    return other, project, warnings
 
 
 # --- the file format -----------------------------------------------------
@@ -120,7 +105,8 @@ def test_sources_under_the_project_folder_are_stored_relative(tmp_path):
     assert raw["sources"] == ["data/survey.zip"], "should be relative"
 
     back = Project.load(saved)
-    assert _path_exists(back.sources[0])
+    from pathlib import Path
+    assert Path(back.sources[0]).exists()
 
 
 def test_sources_outside_the_project_folder_stay_absolute(tmp_path):
@@ -151,63 +137,85 @@ def test_missing_sources_are_reported_not_raised(tmp_path):
 
 # --- the basemap stack ---------------------------------------------------
 
-def test_fetch_all_reports_each_outcome(window):
-    report = window.state.fetch_all_imagery()
-    assert set(report.fetched) == {"photo-a", "photo-b", "terrain-a"}
-    assert report.no_coverage == ["blank-one"]
-    assert [n for n, _ in report.failed] == ["broken-one"]
+def test_fetch_all_reports_each_outcome(stubbed):
+    result = stubbed.fetch_all_imagery()
+    assert set(result.fetched) == {"photo-a", "photo-b", "terrain-a"}
+    assert result.no_coverage == ["blank-one"]
+    assert [n for n, _ in result.failed] == ["broken-one"]
     # A source that can only ever show an empty tile gets no checkbox.
-    assert "blank-one" not in window.state.basemaps
+    assert "blank-one" not in stubbed.basemaps
 
 
-def test_only_the_first_photo_is_visible_after_fetching_all(window):
+def test_only_the_first_photo_is_visible_after_fetching_all(stubbed):
     """Otherwise the map shows whichever raster happened to arrive last."""
-    window.state.fetch_all_imagery()
-    visible = [b.provider for b in window.state.visible_basemaps]
+    stubbed.fetch_all_imagery()
+    visible = [b.provider for b in stubbed.visible_basemaps]
     assert visible == ["photo-a"]
 
 
-def test_terrain_rasters_are_flagged(window):
-    window.state.fetch_all_imagery()
-    assert window.state.basemaps["terrain-a"].terrain
-    assert not window.state.basemaps["photo-a"].terrain
+def test_terrain_rasters_are_flagged(stubbed):
+    stubbed.fetch_all_imagery()
+    assert stubbed.basemaps["terrain-a"].terrain
+    assert not stubbed.basemaps["photo-a"].terrain
 
 
-def test_visibility_and_opacity_are_independent(window):
-    window.state.fetch_all_imagery()
-    window.state.set_basemap_visible("terrain-a", True)
-    window.state.set_basemap_opacity("terrain-a", 0.35)
-    assert window.state.basemaps["terrain-a"].visible
-    assert window.state.basemaps["terrain-a"].opacity == pytest.approx(0.35)
-    assert len(window.state.visible_basemaps) == 2
+def test_visibility_and_opacity_are_independent(stubbed):
+    stubbed.fetch_all_imagery()
+    stubbed.set_basemap_visible("terrain-a", True)
+    stubbed.set_basemap_opacity("terrain-a", 0.35)
+    assert stubbed.basemaps["terrain-a"].visible
+    assert stubbed.basemaps["terrain-a"].opacity == pytest.approx(0.35)
+    assert len(stubbed.visible_basemaps) == 2
 
 
-def test_opacity_is_clamped(window):
-    window.state.fetch_all_imagery()
-    window.state.set_basemap_opacity("photo-a", 5.0)
-    assert window.state.basemaps["photo-a"].opacity == 1.0
-    window.state.set_basemap_opacity("photo-a", -2.0)
-    assert window.state.basemaps["photo-a"].opacity == 0.0
+def test_opacity_is_clamped(stubbed):
+    stubbed.fetch_all_imagery()
+    stubbed.set_basemap_opacity("photo-a", 5.0)
+    assert stubbed.basemaps["photo-a"].opacity == 1.0
+    stubbed.set_basemap_opacity("photo-a", -2.0)
+    assert stubbed.basemaps["photo-a"].opacity == 0.0
 
 
-def test_imagery_extent_does_not_move_when_filters_change(window):
+def test_the_basemap_list_reports_changes_made_elsewhere(stubbed):
+    """Visibility set by fetch-all or by opening a project must reach the
+    panel. Without that the checkboxes silently disagree with the map."""
+    stubbed.fetch_all_imagery()
+    shown = {b["name"]: b for b in views.basemap_payload(stubbed)}
+    assert shown["photo-a"]["visible"] and not shown["terrain-a"]["visible"]
+
+    stubbed.set_basemap_visible("terrain-a", True)
+    stubbed.set_basemap_opacity("terrain-a", 0.25)
+    shown = {b["name"]: b for b in views.basemap_payload(stubbed)}
+    assert shown["terrain-a"]["visible"]
+    assert shown["terrain-a"]["opacity"] == pytest.approx(0.25)
+
+
+def test_basemaps_are_listed_photos_first(stubbed):
+    """Photographs underneath LiDAR products: a hillshade at partial opacity
+    over an aerial reads well, and the reverse does not."""
+    stubbed.fetch_all_imagery()
+    names = [b["name"] for b in views.basemap_payload(stubbed)]
+    assert names.index("terrain-a") > names.index("photo-a")
+
+
+def test_imagery_extent_does_not_move_when_filters_change(stubbed):
     """The cache key is built from the extent. If filtering moved it, every
     threshold tweak would silently re-hit a public service."""
-    before = window.state.data_extent()
-    window.state.chain.stages[2].enabled = True
-    window.state.chain.stages[2].minimum = 1.3
-    window.state.recompute()
-    after = window.state.data_extent()
+    before = stubbed.data_extent()
+    stubbed.chain.stages[2].enabled = True
+    stubbed.chain.stages[2].minimum = 0.9
+    stubbed.recompute()
+    after = stubbed.data_extent()
 
-    assert len(window.state.result) < len(window.state.source)
+    assert len(stubbed.result) < len(stubbed.source)
     assert (before.xmin, before.ymin, before.xmax, before.ymax) == \
            (after.xmin, after.ymin, after.xmax, after.ymax)
 
 
 # --- end to end ----------------------------------------------------------
 
-def test_reopening_reproduces_identical_elevations(window, tmp_path):
-    st = window.state
+def test_reopening_reproduces_identical_elevations(stubbed, tmp_path):
+    st = stubbed
     st.fetch_all_imagery()
     st.set_basemap_visible("terrain-a", True)
     st.set_basemap_opacity("terrain-a", 0.4)
@@ -217,63 +225,47 @@ def test_reopening_reproduces_identical_elevations(window, tmp_path):
 
     before = st.result.df[P.ELEV].to_numpy().copy()
     shift = st.vertical.datum_shift_m
-    saved = st.save_project(tmp_path / "s.yardproj", window._view_state())
+    saved = st.save_project(tmp_path / "s.yardproj",
+                            {"colormap": "viridis", "tab": 1})
 
-    from gpsrtk.ui.main import MainWindow
-    other = MainWindow()
-    other.state.cache_dir = st.cache_dir
-    import unittest.mock as mock
-    with mock.patch.object(type(other.state), "all_providers",
-                           lambda self: st.all_providers()):
-        project, warnings = other.state.load_project(saved)
-
-    try:
-        assert not warnings, warnings
-        after = other.state.result.df[P.ELEV].to_numpy()
-        assert np.array_equal(before, after), "elevations must be identical"
-        assert other.state.vertical.datum_shift_m == shift
-        assert other.state.chain.stages[2].enabled
-        assert other.state.basemaps["terrain-a"].opacity == pytest.approx(0.4)
-        assert {b.provider for b in other.state.visible_basemaps} == \
-               {"photo-a", "terrain-a"}
-        assert project.view["colormap"] == window.map2d.cmap.currentText()
-    finally:
-        other.view3d.close_plotter()
+    other, project, warnings = _reopen(st, saved)
+    assert not warnings, warnings
+    after = other.result.df[P.ELEV].to_numpy()
+    assert np.array_equal(before, after), "elevations must be identical"
+    assert other.vertical.datum_shift_m == shift
+    assert other.chain.stages[2].enabled
+    assert other.basemaps["terrain-a"].opacity == pytest.approx(0.4)
+    assert {b.provider for b in other.visible_basemaps} == \
+           {"photo-a", "terrain-a"}
+    # The view comes back the way it was left.
+    assert project.view == {"colormap": "viridis", "tab": 1}
+    assert other.view == project.view
 
 
-def test_saving_without_a_vertical_model_is_fine(window, tmp_path):
-    window.state.fetch_all_imagery()
-    saved = window.state.save_project(tmp_path / "novert.yardproj")
+def test_the_first_plan_edit_after_reopening_keeps_the_stored_model(stubbed, tmp_path):
+    """Reopening applies the stored vertical model rather than re-solving it.
+    A plan edit that the level network cannot see must not re-solve it
+    either, or the exact elevations are gone at the first click."""
+    stubbed.solve_vertical("local")
+    saved = stubbed.save_project(tmp_path / "keep.yardproj")
+
+    other, _, _ = _reopen(stubbed, saved)
+    stored = other.vertical
+    other.plan.add_point(449712.0, 4604565.0)
+    other.plan_changed()
+    assert other.vertical is stored
+
+
+def test_saving_without_a_vertical_model_is_fine(stubbed, tmp_path):
+    stubbed.fetch_all_imagery()
+    saved = stubbed.save_project(tmp_path / "novert.yardproj")
     assert json.loads(saved.read_text())["vertical"] is None
 
 
-def test_panel_checkboxes_follow_state_changed_elsewhere(window):
-    """Visibility set by fetch-all or by opening a project must show up in the
-    panel. Without a sync the checkboxes silently disagree with the map."""
-    panel = window.basemap_panel
-    window.state.fetch_all_imagery()
-    panel.refresh()
-
-    assert panel._rows["photo-a"].check.isChecked()
-    assert not panel._rows["terrain-a"].check.isChecked()
-
-    window.state.set_basemap_visible("terrain-a", True)
-    window.state.set_basemap_opacity("terrain-a", 0.25)
-    panel.refresh()
-
-    assert panel._rows["terrain-a"].check.isChecked()
-    assert panel._rows["terrain-a"].slider.value() == 25
-    assert panel._rows["terrain-a"].pct.text() == "25%"
-
-
-def test_panel_sync_does_not_feed_back_into_state(window):
-    """Syncing widgets must not re-emit and overwrite what it is displaying."""
-    panel = window.basemap_panel
-    window.state.fetch_all_imagery()
-    window.state.set_basemap_opacity("photo-a", 0.33)
-    panel.refresh()
-    panel.refresh()
-    assert window.state.basemaps["photo-a"].opacity == pytest.approx(0.33)
+def test_saving_names_the_project(stubbed, tmp_path):
+    assert stubbed.title == "Yard Survey"
+    stubbed.save_project(tmp_path / "named.yardproj")
+    assert stubbed.title == "Yard Survey — named.yardproj"
 
 
 # --- the plan travels with the project -----------------------------------
@@ -298,66 +290,46 @@ def _seeded_plan(state):
     return plan, a
 
 
-def _reopen(window, saved):
-    """Open a saved project in a second window, with the same stub providers."""
-    import unittest.mock as mock
+def test_the_plan_survives_save_and_reopen(stubbed, tmp_path):
+    plan, a = _seeded_plan(stubbed)
+    saved = stubbed.save_project(tmp_path / "withplan.yardproj")
 
-    from gpsrtk.ui.main import MainWindow
-
-    other = MainWindow()
-    other.state.cache_dir = window.state.cache_dir
-    with mock.patch.object(type(other.state), "all_providers",
-                           lambda self: window.state.all_providers()):
-        other.state.load_project(saved)
-    return other
-
-
-def test_the_plan_survives_save_and_reopen(window, tmp_path):
-    plan, a = _seeded_plan(window.state)
-    saved = window.state.save_project(tmp_path / "withplan.yardproj")
-
-    other = _reopen(window, saved)
-    try:
-        back = other.state.plan
-        assert [p.number for p in back.points] == [p.number for p in plan.points]
-        one = back.by_number(a.number)
-        assert one.observed_e == pytest.approx(a.observed_e)
-        assert one.observed_n == pytest.approx(a.observed_n)
-        assert one.rod_in == pytest.approx(41.5)
-        assert one.purpose == "building corner" and one.setup == "A"
-        assert [ln.line_id for ln in back.lines] == ["swale-1"]
-        assert [s.name for s in back.setups] == ["A"]
-    finally:
-        other.view3d.close_plotter()
+    other, _, _ = _reopen(stubbed, saved)
+    back = other.plan
+    assert [p.number for p in back.points] == [p.number for p in plan.points]
+    one = back.by_number(a.number)
+    assert one.observed_e == pytest.approx(a.observed_e)
+    assert one.observed_n == pytest.approx(a.observed_n)
+    assert one.rod_in == pytest.approx(41.5)
+    assert one.purpose == "building corner" and one.setup == "A"
+    assert [ln.line_id for ln in back.lines] == ["swale-1"]
+    assert [s.name for s in back.setups] == ["A"]
 
 
-def test_a_measured_coordinate_actually_reaches_the_file(window, tmp_path):
+def test_a_measured_coordinate_actually_reaches_the_file(stubbed, tmp_path):
     """The exact failure: the numbers typed in were not in the JSON."""
-    _seeded_plan(window.state)
-    saved = window.state.save_project(tmp_path / "coords.yardproj")
+    _seeded_plan(stubbed)
+    saved = stubbed.save_project(tmp_path / "coords.yardproj")
     raw = saved.read_text(encoding="utf-8")
 
     assert "plan" in json.loads(raw)
     assert "449712.4" in raw, "the measured easting is not in the saved file"
 
 
-def test_reopening_restores_the_plan_layer_and_its_readings(window, tmp_path):
+def test_reopening_restores_the_plan_layer_and_its_readings(stubbed, tmp_path):
     """Rod readings feed the level network, so the plan has to be back in
     place before anything asks the surface what its datum is."""
-    _seeded_plan(window.state)
-    window.state.refresh_plan_layer()
-    saved = window.state.save_project(tmp_path / "layer.yardproj")
+    _seeded_plan(stubbed)
+    stubbed.refresh_plan_layer()
+    saved = stubbed.save_project(tmp_path / "layer.yardproj")
 
-    other = _reopen(window, saved)
-    try:
-        assert other.state.PLAN_LAYER in other.state.layers
-        assert other.state.spots is not None
-    finally:
-        other.view3d.close_plotter()
+    other, _, _ = _reopen(stubbed, saved)
+    assert other.PLAN_LAYER in other.layers
+    assert other.spots is not None
 
 
-def test_an_empty_plan_is_not_written(window, tmp_path):
-    saved = window.state.save_project(tmp_path / "noplan.yardproj")
+def test_an_empty_plan_is_not_written(stubbed, tmp_path):
+    saved = stubbed.save_project(tmp_path / "noplan.yardproj")
     assert json.loads(saved.read_text())["plan"] is None
 
 
@@ -385,88 +357,54 @@ def test_resaving_stamps_the_current_format(tmp_path):
 
 # --- imagery alignment ----------------------------------------------------
 
-def _basemap_rect(window, name):
-    item = window.map2d._basemap_items[name]
-    return item.mapRectToParent(item.boundingRect())
-
-
-def test_the_imagery_offset_round_trips(window, tmp_path):
+def test_the_imagery_offset_round_trips(stubbed, tmp_path):
     from gpsrtk.georef import ImageryOffset
 
-    window.state.set_imagery_offset(ImageryOffset(de=0.30, dn=-0.15))
-    saved = window.state.save_project(tmp_path / "off.yardproj")
+    stubbed.set_imagery_offset(ImageryOffset(de=0.30, dn=-0.15))
+    saved = stubbed.save_project(tmp_path / "off.yardproj")
 
-    other = _reopen(window, saved)
-    try:
-        assert other.state.imagery_offset.de == pytest.approx(0.30)
-        assert other.state.imagery_offset.dn == pytest.approx(-0.15)
-    finally:
-        other.view3d.close_plotter()
+    other, _, _ = _reopen(stubbed, saved)
+    assert other.imagery_offset.de == pytest.approx(0.30)
+    assert other.imagery_offset.dn == pytest.approx(-0.15)
 
 
-def test_no_offset_is_not_written(window, tmp_path):
-    saved = window.state.save_project(tmp_path / "zero.yardproj")
+def test_no_offset_is_not_written(stubbed, tmp_path):
+    saved = stubbed.save_project(tmp_path / "zero.yardproj")
     assert json.loads(saved.read_text())["imagery_offset"] is None
 
 
-def test_the_offset_moves_the_basemap_and_nothing_else(window):
+def test_the_offset_moves_the_basemap_and_nothing_else(stubbed):
     """The measurements are the better-known thing. Shifting them to agree
     with an aerial photo would be backwards."""
     from gpsrtk.georef import ImageryOffset
 
-    window.state.fetch_all_imagery()
-    window.map2d.refresh()
-    rect0 = _basemap_rect(window, "photo-a")
-    points0 = window.map2d.scatter.getData()
+    stubbed.fetch_all_imagery()
+    extent0 = {b["name"]: b["extent"] for b in views.basemap_payload(stubbed)}
+    points0 = views.unpack_points(views.pack_points(stubbed))
 
-    window.state.set_imagery_offset(ImageryOffset(de=0.30, dn=-0.15))
-    window.map2d.refresh()
-    rect1 = _basemap_rect(window, "photo-a")
-    points1 = window.map2d.scatter.getData()
+    stubbed.set_imagery_offset(ImageryOffset(de=0.30, dn=-0.15))
+    extent1 = {b["name"]: b["extent"] for b in views.basemap_payload(stubbed)}
+    points1 = views.unpack_points(views.pack_points(stubbed))
 
-    assert rect1.x() - rect0.x() == pytest.approx(0.30, abs=1e-6)
-    assert rect1.y() - rect0.y() == pytest.approx(-0.15, abs=1e-6)
-    assert np.array_equal(points0[0], points1[0])
-    assert np.array_equal(points0[1], points1[1])
+    x0, y0, x1, y1 = extent0["photo-a"]
+    assert extent1["photo-a"] == pytest.approx([x0 + 0.30, y0 - 0.15,
+                                                x1 + 0.30, y1 - 0.15], abs=1e-6)
+    assert np.array_equal(points0["x"], points1["x"])
+    assert np.array_equal(points0["y"], points1["y"])
 
 
-def test_a_shifted_basemap_says_so_on_the_view(window):
+def test_a_shifted_basemap_says_so_on_the_view(stubbed):
     """A silently moved photo is the kind of thing that gets trusted later."""
     from gpsrtk.georef import ImageryOffset
 
-    window.state.fetch_all_imagery()
-    window.state.set_imagery_offset(ImageryOffset(de=0.3048, dn=0.0))
-    window.map2d.refresh()
-    assert "imagery shifted 1.00 ft" in window.map2d.info.text()
+    stubbed.fetch_all_imagery()
+    stubbed.set_imagery_offset(ImageryOffset(de=0.3048, dn=0.0))
+    assert "imagery shifted 1.00 ft" in report.info_bits(stubbed)
 
 
-def test_solving_from_the_panel_applies_and_reports(window, monkeypatch):
-    shown = []
-    monkeypatch.setattr(
-        QMessageBox, "information",
-        staticmethod(lambda *a, **k: (shown.append(a), QMessageBox.Ok)[1]))
-
-    plan = window.state.plan
-    for i in range(3):
-        p = plan.add_point(449710.0 + 5 * i, 4604563.0,
-                           purpose="building corner")
-        p.observed_e, p.observed_n = p.planned_e + 0.30, p.planned_n - 0.15
-        p.method, p.fix = "rtk", 4
-    window._on_plan_changed()
-    window.solve_imagery_offset()
-
-    assert window.state.imagery_offset.de == pytest.approx(0.30)
-    assert "imagery moved" in shown[-1][2].lower()
-    # 0.30 m is 0.98 ft; the box shows feet to two places.
-    assert window.basemap_panel.off_e.value() == pytest.approx(0.98, abs=0.005)
-
-
-def test_solving_with_nothing_to_solve_from_explains_itself(window, monkeypatch):
-    shown = []
-    monkeypatch.setattr(
-        QMessageBox, "information",
-        staticmethod(lambda *a, **k: (shown.append(a), QMessageBox.Ok)[1]))
-    window.solve_imagery_offset()
-
-    assert window.state.imagery_offset.zero
-    assert "see in the photo" in shown[-1][2]
+def test_a_hand_typed_shift_carries_no_statistics(stubbed):
+    stubbed.set_manual_imagery_offset(1.0, -0.5)
+    off = stubbed.imagery_offset
+    assert off.de == pytest.approx(0.3048)
+    assert off.dn == pytest.approx(-0.1524)
+    assert off.n == 0 and "by hand" in off.describe()

@@ -13,14 +13,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-pytest.importorskip("PySide6")
-
-from PySide6.QtWidgets import QApplication, QMessageBox      # noqa: E402
-
-from gpsrtk import merge as M                                # noqa: E402
-from gpsrtk.model import pointset as P                       # noqa: E402
-from gpsrtk.model.pointset import PointSet                   # noqa: E402
+from gpsrtk import merge as M
+from gpsrtk.model import pointset as P
+from gpsrtk.model.pointset import PointSet
 
 E0, N0 = 449710.0, 4604565.0
 DAY = pd.Timestamp("2026-08-27 13:00:00")
@@ -184,160 +179,130 @@ def test_reprojecting_without_lat_lon_says_why():
 
 
 # --- through the application state ---------------------------------------
-
-@pytest.fixture(scope="module")
-def app():
-    return QApplication.instance() or QApplication([])
-
+#
+# Two synthetic outings over the same ground a month apart, the second on a
+# mount 5 cm higher - the situation merging exists for. `synthetic.py` says
+# what they contain.
 
 @pytest.fixture
-def win(app, export, monkeypatch, tmp_path):
-    from gpsrtk.ui.main import MainWindow
+def fresh(tmp_path):
+    from gpsrtk.app import AppState
+    from gpsrtk.site import example_site
 
-    shown = []
-    for name in ("information", "warning", "critical"):
-        monkeypatch.setattr(
-            QMessageBox, name,
-            staticmethod(lambda *a, **k: (shown.append(a), QMessageBox.Ok)[1]))
-    w = MainWindow()
-    w.state.cache_dir = tmp_path / "cache"
-    w.dialogs = shown
-    yield w
-    w.view3d.close_plotter()
+    return AppState(site=example_site(), cache_dir=tmp_path / "cache")
 
 
-def _second_export(tmp_path, export, shift_days=30):
-    """A copy of the reference export dated a month later.
+def test_adding_an_export_keeps_the_first(fresh, synthetic_zip, synthetic_outing2):
+    fresh.load(synthetic_zip)
+    before = len(fresh.layers["track_points"])
 
-    Built from the real file so the merge is exercised against real geometry
-    rather than a synthetic pass that happens to overlap itself.
-    """
-    import shutil
-    import zipfile
+    result = fresh.add_export(synthetic_outing2)
 
-    src = export.source_path
-    out = tmp_path / "Outing 2.zip"
-    with zipfile.ZipFile(src) as zin, zipfile.ZipFile(out, "w") as zout:
-        for name in zin.namelist():
-            data = zin.read(name).decode("utf-8", "replace")
-            if name.endswith("TRACK_POINTS.csv"):
-                lines = data.splitlines()
-                head = lines[0].split(",")
-                col = head.index("Time")
-                rows = [lines[0]]
-                for line in lines[1:]:
-                    bits = line.split(",")
-                    if len(bits) > col:
-                        stamp = pd.to_datetime(
-                            bits[col].rsplit(" ", 1)[0],
-                            format="%m/%d/%Y %H:%M:%S.%f", errors="coerce")
-                        if pd.notna(stamp):
-                            stamp += pd.Timedelta(days=shift_days)
-                            bits[col] = (stamp.strftime("%m/%d/%Y %H:%M:%S.%f")[:-3]
-                                         + " CDT")
-                    rows.append(",".join(bits))
-                data = "\n".join(rows)
-            zout.writestr(name.replace("Project 1", "Outing 2"), data)
-    shutil.copystat(src, out)
-    return out
+    after = len(fresh.layers["track_points"])
+    assert after > before
+    assert result.layers["track_points"] == (before, after)
+    assert result.added == after - before
+    assert len(fresh.sources) == 2
+    assert len(result.sessions) == 2
+    assert result.reconcilable
 
 
-def test_adding_an_export_keeps_the_first(win, export, tmp_path):
-    win.state.load(str(export.source_path))
-    before = len(win.state.layers["track_points"])
-
-    report = win.state.add_export(str(_second_export(tmp_path, export)))
-
-    assert len(win.state.layers["track_points"]) == before * 2
-    # `added` counts every layer the merge touched, not just the track.
-    assert report.layers["track_points"] == (before, before * 2)
-    assert report.added > before
-    assert len(win.state.sources) == 2
-    assert len(report.sessions) >= 2
-
-
-def test_the_same_file_twice_is_refused(win, export):
+def test_the_same_file_twice_is_refused(fresh, synthetic_zip):
     """Loading it again would double every point and make the duplicates look
     like a perfect crossover."""
-    win.state.load(str(export.source_path))
+    fresh.load(synthetic_zip)
     with pytest.raises(ValueError, match="already loaded"):
-        win.state.add_export(str(export.source_path))
+        fresh.add_export(synthetic_zip)
 
 
-def test_opening_replaces_rather_than_merges(win, export, tmp_path):
-    win.state.load(str(export.source_path))
-    n = len(win.state.layers["track_points"])
-    win.state.load(str(_second_export(tmp_path, export)))
-    assert len(win.state.layers["track_points"]) == n
-    assert len(win.state.sources) == 1
+def test_opening_replaces_rather_than_merges(fresh, synthetic_zip, synthetic_outing2):
+    fresh.load(synthetic_zip)
+    n = len(fresh.layers["track_points"])
+    fresh.load(synthetic_outing2)
+    assert len(fresh.layers["track_points"]) == n
+    assert len(fresh.sources) == 1
 
 
-def test_a_merge_clears_a_stale_vertical_model(win, export, tmp_path):
+def test_a_merge_clears_a_stale_vertical_model(fresh, synthetic_zip, synthetic_outing2):
     """The model was solved for a set of sessions that no longer exists, so
     re-applying it would put the new points on a datum nothing measured."""
-    win.state.load(str(export.source_path))
-    win.state.solve_vertical("local")
-    assert win.state.vertical is not None
+    fresh.load(synthetic_zip)
+    fresh.solve_vertical("local")
+    assert fresh.vertical is not None
 
-    report = win.state.add_export(str(_second_export(tmp_path, export)))
-    assert win.state.vertical is None
-    assert any("cleared" in n for n in report.notes)
+    result = fresh.add_export(synthetic_outing2)
+    assert fresh.vertical is None
+    assert any("cleared" in n for n in result.notes)
 
 
-def test_merged_sessions_can_be_solved(win, export, tmp_path):
+def test_merged_sessions_can_be_solved(fresh, synthetic_zip, synthetic_outing2):
     """The point of merging: one datum across both outings."""
-    win.state.load(str(export.source_path))
-    win.state.add_export(str(_second_export(tmp_path, export)))
-    model = win.state.solve_vertical("ellipsoidal")
+    fresh.load(synthetic_zip)
+    fresh.add_export(synthetic_outing2)
+    model = fresh.solve_vertical("ellipsoidal")
 
     assert model.sessions is not None
-    assert len(model.sessions.offsets) >= 2
+    assert len(model.sessions.offsets) == 2
     assert not model.sessions.unresolved
+    # The second outing was written 5 cm high; the solve should say so.
+    second = next(v for k, v in model.sessions.offsets.items()
+                  if k.startswith("Outing 2"))
+    assert second == pytest.approx(0.05, abs=0.01)
 
 
-def test_a_merged_project_round_trips(win, export, tmp_path):
+def test_an_outing_on_other_ground_cannot_be_reconciled(
+        fresh, synthetic_zip, synthetic_outing2, synthetic_elsewhere):
+    """The one outcome worth a warning at merge time: its offset is not
+    determined by anything, and only a return visit recovers it."""
+    fresh.load(synthetic_zip)
+    fresh.add_export(synthetic_outing2)
+    result = fresh.add_export(synthetic_elsewhere)
+    assert not result.reconcilable
+    assert [name.split("/")[0] for name in result.unlinked] == ["Elsewhere"]
+    assert "CANNOT BE RECONCILED" in result.describe()
+
+
+def test_a_merged_project_round_trips(fresh, synthetic_zip, synthetic_outing2, tmp_path):
     """A project referencing two exports used to load only the last one."""
-    win.state.load(str(export.source_path))
-    win.state.add_export(str(_second_export(tmp_path, export)))
-    total = len(win.state.layers["track_points"])
-    saved = win.state.save_project(tmp_path / "merged.yardproj")
+    from gpsrtk.app import AppState
+    from gpsrtk.site import example_site
 
-    from gpsrtk.ui.main import MainWindow
-    other = MainWindow()
-    other.state.cache_dir = win.state.cache_dir
-    try:
-        project, warnings = other.state.load_project(saved)
-        assert len(project.sources) == 2
-        assert not warnings, warnings
-        assert len(other.state.layers["track_points"]) == total
-        assert len(other.state.sources) == 2
-    finally:
-        other.view3d.close_plotter()
+    fresh.load(synthetic_zip)
+    fresh.add_export(synthetic_outing2)
+    total = len(fresh.layers["track_points"])
+    saved = fresh.save_project(tmp_path / "merged.yardproj")
+
+    other = AppState(site=example_site(), cache_dir=fresh.cache_dir)
+    project, warnings = other.load_project(saved)
+    assert len(project.sources) == 2
+    assert not warnings, warnings
+    assert len(other.layers["track_points"]) == total
+    assert len(other.sources) == 2
 
 
-def test_a_layer_spanning_sessions_says_so(win, export, tmp_path):
-    win.state.load(str(export.source_path))
-    win.state.add_export(str(_second_export(tmp_path, export)))
-    assert "2 sessions" in win.state.layers["track_points"].describe()
+def test_a_layer_spanning_sessions_says_so(fresh, synthetic_zip, synthetic_outing2):
+    from gpsrtk.app import report
 
-    win.vertical_panel.refresh()
-    assert "SPANS 2 SESSIONS" in win.vertical_panel.body.text()
+    fresh.load(synthetic_zip)
+    fresh.add_export(synthetic_outing2)
+    assert "2 sessions" in fresh.layers["track_points"].describe()
+    assert "SPANS 2 SESSIONS" in report.vertical_text(fresh)
 
 
 @pytest.mark.skipif(
     not (os.path.exists("archive/Project_1_-_2nd.swmz")),
     reason="real .swmz not present")
-def test_the_two_real_formats_merge(win, export):
+def test_the_two_real_formats_merge(fresh, export):
     """A CSV export and a .swmz of different outings, in one data set."""
-    win.state.load(str(export.source_path))
-    report = win.state.add_export("archive/Project_1_-_2nd.swmz")
+    fresh.load(str(export.source_path))
+    result = fresh.add_export("archive/Project_1_-_2nd.swmz")
 
-    assert len(win.state.layers["track_points"]) == 8_194 + 35_317
-    assert report.reconcilable
-    assert sum(report.overlaps.values()) > 1_000
-    assert report.reprojected == [], "both sit in UTM 15N already"
+    assert len(fresh.layers["track_points"]) == 8_194 + 35_317
+    assert result.reconcilable
+    assert sum(result.overlaps.values()) > 1_000
+    assert result.reprojected == [], "both sit in UTM 15N already"
 
-    model = win.state.solve_vertical("ellipsoidal")
+    model = fresh.solve_vertical("ellipsoidal")
     offsets = model.sessions.offsets
     assert len(offsets) == 3          # 08-22 spots, 08-27 walk, 09-23 walk
     assert not model.sessions.unresolved

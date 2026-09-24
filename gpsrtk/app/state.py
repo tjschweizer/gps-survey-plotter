@@ -4,6 +4,10 @@ One object owns the site, the loaded layers, the filter chain, the vertical
 model, imagery, and the derived surface. The views observe it and never talk to
 each other, so adding a view later does not touch the existing ones.
 
+It knows nothing about how it is displayed. Every change is announced through a
+`Signal` that bumps a revision counter for its topic; the web server hands
+those counters to the browser, which fetches again only what moved.
+
 The pipeline has two stages and the distinction matters:
 
     source -> filter chain -> filtered -> vertical model -> result -> surface
@@ -20,10 +24,8 @@ intolerable on every checkbox toggle.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-
-from PySide6.QtCore import QObject, Signal
 
 from ..filters import FilterChain, default_chain
 from ..io import read_any
@@ -39,6 +41,7 @@ from ..project import BasemapState, Project
 from ..site import Site, default_site
 from ..surface import Extent, Surface, build_surface
 from ..vertical import VerticalModel
+from .events import Signal
 
 PREVIEW_SIZE = 320
 EXPORT_SIZE = 1024
@@ -54,6 +57,8 @@ class Basemap:
     visible: bool = False
     opacity: float = 1.0
     terrain: bool = False        # a LiDAR product rather than a photograph
+    # The raster encoded once for the browser, rather than on every redraw.
+    png: bytes | None = field(default=None, repr=False, compare=False)
 
 
 @dataclass
@@ -79,22 +84,28 @@ class FetchReport:
         return "\n".join(lines)
 
 
-class AppState(QObject):
+class AppState:
     """Owns everything the views draw."""
-
-    layersChanged = Signal()
-    selectionChanged = Signal()
-    resultChanged = Signal()
-    verticalChanged = Signal()
-    imageryChanged = Signal()
-    planChanged = Signal()
-    statusMessage = Signal(str)
 
     PLAN_LAYER = "plan shots"
 
     def __init__(self, site: Site | None = None,
                  cache_dir: str | Path = "cache"):
-        super().__init__()
+        # One counter per topic. A view that remembers the numbers it last
+        # drew from can tell exactly which parts of itself are stale.
+        self.revisions: dict[str, int] = {}
+        self.layersChanged = Signal("layers", self.revisions)
+        self.selectionChanged = Signal("selection", self.revisions)
+        self.resultChanged = Signal("result", self.revisions)
+        self.verticalChanged = Signal("vertical", self.revisions)
+        self.imageryChanged = Signal("imagery", self.revisions)
+        self.planChanged = Signal("plan", self.revisions)
+        self.siteChanged = Signal("site", self.revisions)
+        self.viewChanged = Signal("view", self.revisions)
+        self.statusMessage = Signal("status", self.revisions)
+        self.status = ""
+        self.statusMessage.connect(self._set_status)
+
         self.site: Site = site or default_site()
         self.cache_dir = Path(cache_dir)
         self.layers: dict[str, PointSet] = {}
@@ -127,6 +138,23 @@ class AppState(QObject):
         # would let two photos of the same ground disagree, which is a
         # worse lie than either being off.
         self.imagery_offset = ImageryOffset()
+
+        # The plan readings the current vertical model was solved with, so an
+        # edit that does not touch them does not trigger a re-solve.
+        self._solved_plan: str | None = None
+
+        # View settings (colour map, layer toggles) as last saved or opened.
+        # The state does not use them; it carries them so that a project
+        # reopens looking the way it was left.
+        self.view: dict = {}
+
+    def _set_status(self, message: str) -> None:
+        self.status = message
+
+    @property
+    def title(self) -> str:
+        return ("Yard Survey — " + self.project_path.name
+                if self.project_path is not None else "Yard Survey")
 
     # --- loading ---------------------------------------------------------
 
@@ -345,6 +373,7 @@ class AppState(QObject):
                                  geoid=geoid, tied_to_model=v.tied_to_model,
                                  model_frame=v.model_frame, **kw)
         self.vertical = model
+        self._solved_plan = self._plan_signature()
         self.verticalChanged.emit()
         self.recompute()
         return model
@@ -500,8 +529,11 @@ class AppState(QObject):
         )
 
     def save_project(self, path: str | Path, view: dict | None = None) -> Path:
-        saved = self.to_project(view).save(path)
+        if view is not None:
+            self.view = dict(view)
+        saved = self.to_project(self.view).save(path)
         self.project_path = saved
+        self.statusMessage.emit(f"Saved {saved}")
         return saved
 
     def load_project(self, path: str | Path, size: int = 1024) -> tuple[Project, list[str]]:
@@ -517,6 +549,7 @@ class AppState(QObject):
         warnings: list[str] = []
 
         self.site = project.site
+        self.siteChanged.emit()
         self.vertical = None
         self.basemaps.clear()
         self.vectors.clear()
@@ -548,6 +581,9 @@ class AppState(QObject):
 
         if project.vertical:
             self.vertical = VerticalModel.from_dict(project.vertical)
+            # It was solved with the plan it was saved with. Counting it as
+            # such keeps the first edit after opening from re-solving it away.
+            self._solved_plan = self._plan_signature()
 
         self.recompute()
 
@@ -557,10 +593,13 @@ class AppState(QObject):
             warnings += self._restore_vectors(project)
 
         self.project_path = Path(path)
+        self.view = dict(project.view)
+        self.viewChanged.emit()
         self.refresh_plan_layer()
         self.layersChanged.emit()
         self.verticalChanged.emit()
         self.imageryChanged.emit()
+        self.statusMessage.emit(f"Opened {path}")
         return project, warnings
 
     # --- imagery alignment ----------------------------------------------
@@ -625,3 +664,90 @@ class AppState(QObject):
     def clear_vectors(self) -> None:
         self.vectors.clear()
         self.imageryChanged.emit()
+
+    # --- operations the desktop window used to own -----------------------
+
+    def _plan_signature(self) -> str:
+        """What the plan contributes to the level network, as a string.
+
+        Only shots with a rod reading reach the network, at their resolved
+        positions. Placing, moving or relabelling a shot that has no reading
+        changes none of that.
+        """
+        frame = self.plan.to_frame()
+        return "" if frame.empty else frame.to_json()
+
+    def plan_changed(self) -> None:
+        """The plan was edited: republish it, and re-solve a solved datum.
+
+        Rod readings feed the level network, so an edit to the plan can move
+        the datum - but only an edit to what the network sees. Re-solving for
+        every click would stall the map for a second or more on a merged
+        data set, for no change in any number.
+
+        A failed re-solve is reported, not raised: the edit itself succeeded,
+        and refusing it because the network is momentarily unsolvable (a
+        benchmark shot not yet typed in) would be backwards.
+        """
+        self.refresh_plan_layer()
+        if (self.vertical is not None
+                and self._plan_signature() != self._solved_plan):
+            try:
+                self.solve_vertical(self.vertical.mode)
+            except Exception as exc:                        # noqa: BLE001
+                self.statusMessage.emit(f"Could not re-solve: {exc}")
+
+    def open_plan(self, path: str | Path) -> Plan:
+        plan = Plan.load(path)
+        if plan.epsg and plan.epsg != self.site.epsg:
+            raise ValueError(
+                f"That plan was made in EPSG:{plan.epsg} but this site is "
+                f"EPSG:{self.site.epsg}. The positions would be wrong.")
+        self.plan = plan
+        self.plan_changed()
+        self.statusMessage.emit(f"Opened {Path(path).name}")
+        return plan
+
+    def save_plan(self, path: str | Path) -> Path:
+        self.plan.epsg = self.site.epsg
+        saved = self.plan.save(path)
+        self.statusMessage.emit(f"Saved {saved.name}")
+        return saved
+
+    def spot_ids(self) -> list[int]:
+        """Point ids a benchmark can be chosen from."""
+        spots = self.spots
+        if spots is None or "point_id" not in spots.df.columns:
+            return []
+        return sorted(int(i) for i in spots.df["point_id"].dropna().unique())
+
+    def set_datum_tie(self, *, point, elev_ft: float, note: str = "",
+                      frame: str = "", tied: bool = False
+                      ) -> VerticalModel | None:
+        """Change which shot the survey hangs from, and at what elevation.
+
+        A solved model is re-solved rather than left in place: the benchmark
+        changed, so a surface that still claimed the old datum would be
+        wrong. Returns the new model when there was one to re-solve.
+        """
+        from .datum import apply_tie
+
+        apply_tie(self.site, point=point, elev_ft=elev_ft, note=note,
+                  frame=frame, tied=tied)
+        self.siteChanged.emit()
+        self.statusMessage.emit(self.site.vertical.describe())
+        if self.vertical is not None:
+            return self.solve_vertical(self.vertical.mode)
+        self.verticalChanged.emit()
+        return None
+
+    def set_manual_imagery_offset(self, de_ft: float, dn_ft: float) -> None:
+        """A hand-typed shift.
+
+        It has no points behind it, so it is stored with no statistics rather
+        than inheriting the ones from a previous solve.
+        """
+        from ..units import ft_to_m
+
+        self.set_imagery_offset(ImageryOffset(de=ft_to_m(de_ft),
+                                              dn=ft_to_m(dn_ft)))

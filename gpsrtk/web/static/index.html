@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Yard Survey</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M1 13 L5 7 L8 10 L11 4 L15 13 Z' fill='%232b7a3d'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/vendor/ol/ol.css">
+<link rel="stylesheet" href="/static/vendor/tabulator/tabulator.min.css">
+<link rel="stylesheet" href="/static/css/app.css">
+<script src="/static/vendor/ol/ol.js"></script>
+<script src="/static/vendor/tabulator/tabulator.min.js"></script>
+<script type="module" src="/static/js/main.js"></script>
+</head>
+<body>
+<header id="menubar" role="menubar"></header>
+
+<div id="workspace">
+  <aside id="left" class="dock" aria-label="Layers and filters">
+    <details class="panel" id="panel-layers" open>
+      <summary>Layers</summary>
+      <div class="body"></div>
+    </details>
+    <details class="panel" id="panel-chain" open>
+      <summary>Filter stack</summary>
+      <div class="body"></div>
+    </details>
+  </aside>
+
+  <div class="splitter" data-side="left" title="Drag to resize"></div>
+
+  <main id="centre">
+    <nav id="tabs" role="tablist">
+      <button role="tab" data-tab="plan" aria-selected="true">Plan</button>
+      <button role="tab" data-tab="3d" aria-selected="false">3D</button>
+    </nav>
+
+    <section id="view-plan" class="view" role="tabpanel">
+      <div class="toolbar" id="map-toolbar">
+        <label><input type="checkbox" id="show-imagery" checked> imagery</label>
+        <label><input type="checkbox" id="show-surface" checked> surface</label>
+        <input type="range" id="surface-opacity" min="0" max="100" value="85"
+               title="surface opacity over the imagery">
+        <label><input type="checkbox" id="show-points" checked> points</label>
+        <label><input type="checkbox" id="show-reference" checked> reference</label>
+        <label class="gap">colour <select id="color-by"></select></label>
+        <label>map <select id="cmap"></select></label>
+      </div>
+      <div id="map" tabindex="0"></div>
+      <div id="map-info" class="map-info"></div>
+      <div id="map-tip" class="tip" hidden></div>
+    </section>
+
+    <section id="view-3d" class="view" role="tabpanel" hidden>
+      <div class="toolbar">
+        <label>vertical exaggeration
+          <input type="range" id="ve" min="1" max="40" value="8"></label>
+        <span id="ve-label" class="num">8×</span>
+        <label class="gap">map <select id="cmap3d"></select></label>
+        <button id="reset3d">Reset view</button>
+      </div>
+      <div id="plot3d"></div>
+    </section>
+
+    <div class="hsplitter" title="Drag to resize"></div>
+    <pre id="qc" class="qc" aria-label="Measured QC"></pre>
+  </main>
+
+  <div class="splitter" data-side="right" title="Drag to resize"></div>
+
+  <aside id="right" class="dock" aria-label="Basemaps, shot plan and datum">
+    <details class="panel" id="panel-basemaps" open>
+      <summary>Basemaps</summary>
+      <div class="body"></div>
+    </details>
+    <details class="panel" id="panel-plan" open>
+      <summary>Shot plan</summary>
+      <div class="body"></div>
+    </details>
+    <details class="panel" id="panel-vertical" open>
+      <summary>Vertical datum</summary>
+      <div class="body"></div>
+    </details>
+  </aside>
+</div>
+
+<footer id="statusbar">
+  <span id="status">Starting…</span>
+  <span id="cursor" class="num"></span>
+</footer>
+
+<div id="busy" hidden>
+  <div class="busy-box"><div class="spinner"></div><span id="busy-text">Working…</span></div>
+</div>
+</body>
+</html>
