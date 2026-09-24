@@ -195,6 +195,15 @@ class AppState:
                 "perfect crossover.")
 
         exp = read_any(path)
+        # Refuse before touching anything. A CSV that is not a survey reads
+        # as a table with no points, and replacing the session with that
+        # used to throw away the layers, the solved model and the session
+        # choices on a mis-click in the file dialog.
+        if not exp.layers:
+            raise ValueError(
+                f"{path.name} contains no survey points - no layer in it "
+                "has easting, northing and elevation columns. Nothing loaded "
+                "has been changed.")
         report = MergeReport()
 
         incoming, reprojected = self._reconcile_crs(exp.layers)

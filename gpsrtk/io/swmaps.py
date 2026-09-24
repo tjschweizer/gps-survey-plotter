@@ -129,8 +129,10 @@ class SWMapsReader(SurveyReader):
         stem = path.stem
         exp = SurveyExport(name=stem, source_path=path)
 
-        for filename, frame in self._frames(path):
-            label = self._layer_label(filename, stem)
+        frames = list(self._frames(path))
+        prefix = self._project_prefix([name for name, _ in frames], stem)
+        for filename, frame in frames:
+            label = self._layer_label(filename, prefix)
             frame = normalise(frame, source=filename, session=stem)
 
             # A layer is point data only if it actually carries coordinates.
@@ -143,10 +145,30 @@ class SWMapsReader(SurveyReader):
         return exp
 
     @staticmethod
-    def _layer_label(filename: str, stem: str) -> str:
+    def _project_prefix(filenames: list[str], stem: str) -> str:
+        """The project name SW Maps put in front of every file in the export.
+
+        Read from the fixed-purpose files rather than taken from the zip's
+        own name, which is whatever the file was saved or downloaded as: a
+        browser's "Project 1 (1).zip" still holds "Project 1_TRACK_POINTS.csv".
+        Labelling from the zip name turned a renamed export's layers into
+        "Project 1_TRACK_POINTS", which never merged with `track_points`.
+        """
+        found: dict[str, int] = {}
+        for name in filenames:
+            base = Path(name).stem
+            for reserved in RESERVED:
+                tail = "_" + reserved
+                if base.upper().endswith(tail) and len(base) > len(tail):
+                    prefix = base[:-len(tail)]
+                    found[prefix] = found.get(prefix, 0) + 1
+        return max(found, key=found.get) if found else stem
+
+    @staticmethod
+    def _layer_label(filename: str, prefix: str) -> str:
         base = Path(filename).stem
-        if base.startswith(stem + "_"):
-            base = base[len(stem) + 1:]
+        if base.startswith(prefix + "_"):
+            base = base[len(prefix) + 1:]
         return base.lower() if base.upper() in RESERVED else base
 
     @staticmethod

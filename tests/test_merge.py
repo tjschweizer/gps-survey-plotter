@@ -215,6 +215,21 @@ def test_the_same_file_twice_is_refused(fresh, synthetic_zip):
         fresh.add_export(synthetic_zip)
 
 
+def test_a_renamed_export_keeps_its_layer_names(tmp_path, synthetic_zip):
+    """A browser saves a second download as "X (1).zip"; the files inside
+    still carry the project's own name, and the layers are the same layers."""
+    import shutil
+
+    from gpsrtk.io import read_any
+
+    renamed = tmp_path / "Synthetic Yard (1).zip"
+    shutil.copy(synthetic_zip, renamed)
+    exp = read_any(renamed)
+    assert set(exp.layers) == {"track_points", "spots", "feature_points"}
+    # Sessions are still named after the file, as before.
+    assert exp["track_points"].df[P.SESSION].iloc[0].startswith("Synthetic Yard (1)/")
+
+
 def test_opening_replaces_rather_than_merges(fresh, synthetic_zip, synthetic_outing2):
     fresh.load(synthetic_zip)
     n = len(fresh.layers["track_points"])
