@@ -359,6 +359,19 @@ def test_opening_a_missing_file_is_an_error_not_a_crash(client, tmp_path):
     assert error["title"] == "Could not open"
 
 
+def test_a_file_with_no_survey_points_leaves_the_session_alone(client, state, tmp_path):
+    """A mis-click in the file dialog must not empty the session."""
+    before = {k: len(v) for k, v in state.layers.items()}
+    state.solve_vertical("ellipsoidal")
+    notes = tmp_path / "notes.csv"
+    notes.write_text("hello,world\n1,2\n")
+
+    error = post(client, "/api/export/open", {"path": str(notes)}, 400)["error"]
+    assert "no survey points" in error["text"]
+    assert {k: len(v) for k, v in state.layers.items()} == before
+    assert state.vertical is not None
+
+
 # --- the plan through the API ---------------------------------------------------------------
 
 def test_points_are_placed_and_moved_in_local_metres(client, state):
