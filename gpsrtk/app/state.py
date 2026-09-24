@@ -10,12 +10,19 @@ those counters to the browser, which fetches again only what moved.
 
 The pipeline has two stages and the distinction matters:
 
-    source -> filter chain -> filtered -> vertical model -> result -> surface
+    source -> filter chain -> filtered -> vertical model -> corrected
+           -> [shown sessions] -> result -> surface
 
 Filtering decides which observations to believe. The vertical model decides
 what their heights mean. Keeping them separate is what lets the filter stack be
 re-tuned without re-solving the datum, and the datum be re-solved without
 disturbing the filters.
+
+The session step is a comparison, not a belief. Hiding a session takes its
+points off the map; optionally it also takes them out of the surface and the
+QC, so one outing can be judged on its own. It comes after the vertical model
+on purpose: the datum is always solved from every outing, so looking at one
+of them never moves it.
 
 Surfaces are built at a lower resolution for interaction than for export.
 Gridding 1024x1024 takes a second or two, which is fine once at export time and
@@ -34,7 +41,7 @@ from ..io.imagery import (ImageryProvider, NoCoverageError, RasterLayer,
 from ..io.vector import VectorLayer, default_vector_providers
 from ..merge import MergeReport, crs_disagreement_m, diagnose, \
     merge_layers, reproject
-from ..model.pointset import PointSet, E, N
+from ..model.pointset import PointSet, E, N, SESSION
 from ..georef import ImageryOffset, solve_imagery_offset
 from ..plan import Plan
 from ..project import BasemapState, Project
@@ -45,6 +52,7 @@ from .events import Signal
 
 PREVIEW_SIZE = 320
 EXPORT_SIZE = 1024
+FIGURE_CELL_M = 0.08
 IMAGERY_MARGIN_M = 20.0
 
 
@@ -100,6 +108,7 @@ class AppState:
         self.verticalChanged = Signal("vertical", self.revisions)
         self.imageryChanged = Signal("imagery", self.revisions)
         self.planChanged = Signal("plan", self.revisions)
+        self.sessionsChanged = Signal("sessions", self.revisions)
         self.siteChanged = Signal("site", self.revisions)
         self.viewChanged = Signal("view", self.revisions)
         self.statusMessage = Signal("status", self.revisions)
@@ -114,7 +123,13 @@ class AppState:
         self.chain: FilterChain = default_chain()
 
         self.filtered: PointSet | None = None      # after the filter chain
-        self.result: PointSet | None = None        # after the vertical model
+        self.corrected: PointSet | None = None     # after the vertical model
+        self.result: PointSet | None = None        # the sessions being surfaced
+
+        # Sessions taken off the map, and whether they are also taken out of
+        # the surface and the QC. Names absent from the data are ignored.
+        self.hidden_sessions: set[str] = set()
+        self.surface_from_shown: bool = False
         self.surface: Surface | None = None
         self.vertical: VerticalModel | None = None
 
@@ -200,6 +215,7 @@ class AppState:
             self.layers = dict(incoming)
             self.visible = {}
             self.sources = [path]
+            self.hidden_sessions = set()
             self.vertical = None
             report.layers = {k: (0, len(v)) for k, v in incoming.items()}
 
@@ -315,13 +331,15 @@ class AppState:
     def recompute(self, build: bool = True) -> None:
         src = self.source
         if src is None:
-            self.filtered = self.result = self.surface = None
+            self.filtered = self.corrected = self.result = self.surface = None
             self.resultChanged.emit()
             return
 
         self.filtered = self.chain.run(src)
-        self.result = (self.vertical.apply(self.filtered)
-                       if self.vertical is not None else self.filtered)
+        self.corrected = (self.vertical.apply(self.filtered)
+                          if self.vertical is not None else self.filtered)
+        self.result = (self.shown(self.corrected) if self.surface_from_shown
+                       else self.corrected)
 
         self.surface = None
         if build and len(self.result) >= 3:
@@ -336,6 +354,23 @@ class AppState:
                 "too few to grid.")
         self.resultChanged.emit()
 
+    def figure_surface(self, cell_m: float = FIGURE_CELL_M) -> Surface | None:
+        """A surface for printed maps, gridded at about `cell_m` per pixel.
+
+        Figures are judged by eye at a fixed printed size, so they want a
+        ground resolution rather than a pixel count: fine enough that
+        contours are smooth curves, not so fine that a lot this size takes
+        seconds to grid.
+        """
+        if self.result is None or len(self.result) < 3:
+            return None
+        from ..surface import bin_cells
+
+        b = bin_cells(self.result, self.site.surface.bin_cell_m, self.site)
+        span = Extent.square_around(b.x.to_numpy(), b.y.to_numpy()).width
+        size = int(min(1024, max(256, round(span / cell_m))))
+        return build_surface(self.result, self.site, size=size)
+
     def export_surface(self) -> Surface | None:
         """Full-resolution surface for writing rasters."""
         if self.result is None or len(self.result) < 3:
@@ -346,6 +381,56 @@ class AppState:
         if name != self.active_layer and name in self.layers:
             self.active_layer = name
             self.recompute()
+
+    # --- sessions ------------------------------------------------------
+
+    @property
+    def sessions(self) -> list[str]:
+        """Every acquisition session in the active layer, sorted by name."""
+        src = self.source
+        if src is None or SESSION not in src.df.columns:
+            return []
+        return sorted(set(src.df[SESSION].dropna().astype(str)))
+
+    @property
+    def hiding(self) -> set[str]:
+        """Hidden sessions that are actually present."""
+        return self.hidden_sessions & set(self.sessions)
+
+    def shown(self, ps: PointSet | None) -> PointSet | None:
+        """The rows of `ps` whose session is not hidden."""
+        hidden = self.hiding
+        if ps is None or not hidden or SESSION not in ps.df.columns:
+            return ps
+        keep = ~ps.df[SESSION].astype(str).isin(hidden).to_numpy()
+        return ps.select(keep, "shown sessions")
+
+    def set_sessions_shown(self, shown) -> None:
+        """Show exactly these sessions and hide the rest."""
+        shown = set(map(str, shown))
+        self._set_hidden({n for n in self.sessions if n not in shown})
+
+    def set_session_visible(self, name: str, visible: bool) -> None:
+        hidden = set(self.hidden_sessions)
+        (hidden.discard if visible else hidden.add)(str(name))
+        self._set_hidden(hidden)
+
+    def _set_hidden(self, hidden: set[str]) -> None:
+        if hidden == self.hidden_sessions:
+            return
+        self.hidden_sessions = hidden
+        self.sessionsChanged.emit()
+        if self.surface_from_shown:
+            self.recompute()
+
+    def set_surface_from_shown(self, on: bool) -> None:
+        """Whether hidden sessions also leave the surface and the QC."""
+        on = bool(on)
+        if on == self.surface_from_shown:
+            return
+        self.surface_from_shown = on
+        self.sessionsChanged.emit()
+        self.recompute()
 
     def set_visible(self, name: str, visible: bool) -> None:
         self.visible[name] = visible
@@ -521,7 +606,11 @@ class AppState:
             basemaps=[BasemapState(b.provider, b.visible, b.opacity)
                       for b in self.basemaps.values()],
             vectors=list(self.vectors),
-            view=dict(view or {}),
+            view={**(view or {}),
+                  # Which sessions were being compared is part of the
+                  # result when they build the surface, so it travels too.
+                  "hidden_sessions": sorted(self.hidden_sessions),
+                  "surface_from_shown_sessions": self.surface_from_shown},
             plan=(self.plan.to_dict()
                   if self.plan.points or self.plan.setups else None),
             imagery_offset=(self.imagery_offset.to_list()
@@ -573,6 +662,9 @@ class AppState:
             except Exception as exc:                      # noqa: BLE001
                 warnings.append(f"could not load {Path(src).name}: {exc}"[:160])
 
+        self.hidden_sessions = set(map(str, project.view.get("hidden_sessions", [])))
+        self.surface_from_shown = bool(project.view.get("surface_from_shown_sessions", False))
+
         if project.active_layer and project.active_layer in self.layers:
             self.active_layer = project.active_layer
 
@@ -595,6 +687,7 @@ class AppState:
         self.project_path = Path(path)
         self.view = dict(project.view)
         self.viewChanged.emit()
+        self.sessionsChanged.emit()
         self.refresh_plan_layer()
         self.layersChanged.emit()
         self.verticalChanged.emit()

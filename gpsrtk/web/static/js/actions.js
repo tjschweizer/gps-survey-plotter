@@ -140,5 +140,17 @@ export const exportHeightmap = () =>
 export const exportRevit = () =>
   requireData() && act("/api/export/revit", {}, { busy: "Writing Revit points…" });
 
+// The printed maps follow what the plan view is showing: the same slope
+// scale, the same contour interval.
+export const exportSlopeMap = () =>
+  requireData() && act("/api/export/slope_map",
+    { slope_max: map2d.viewSettings().slope_max, spacing_m: 1.5 },
+    { busy: "Drawing the slope map…" });
+
+export const exportContourMap = () =>
+  requireData() && act("/api/export/contour_map",
+    { interval_cm: map2d.viewSettings().contour_interval_cm },
+    { busy: "Drawing the contour map…" });
+
 export const resetView2D = () => map2d.resetView();
 export const resetView3D = () => view3d.resetView();

@@ -56,6 +56,7 @@ from ..app import chain_edit as CE
 from ..app import plan_edit as PE
 from ..app import report, views
 from ..app.datum import tie_form
+from ..app.sessions import sessions_payload
 from ..io.imagery import NoCoverageError
 from ..io.vector import default_vector_providers
 from ..project import SUFFIX as PROJECT_SUFFIX
@@ -116,7 +117,10 @@ class Server:
         self.downloads: dict[str, tuple[str, bytes, str, bool]] = {}
         self.last_dir: str | None = None
         self._qc: tuple[tuple, str] = ((), "")
-        self._surface_png: tuple[tuple, bytes] = ((), b"")
+        self._sessions: tuple[tuple, dict] = ((), {})
+        self._derived_key: tuple = ()
+        self._derived: dict = {}
+        self._scales = views.legend_scales()
 
     # --- plumbing --------------------------------------------------------
 
@@ -169,6 +173,36 @@ class Server:
         self.last_dir = str(p if p.is_dir() else p.parent)
 
     # --- the snapshot ----------------------------------------------------
+
+    def derived(self, name: str, params: tuple, compute):
+        """Something computed from the current surface, kept until it changes.
+
+        Slope, contours and drainage arrows are each asked for by several
+        requests (the image, the arrows, the legend) and cost more than the
+        snapshot they ride on, so each is worked out once per surface.
+        """
+        st = self.state
+        key = (id(st.surface), st.revisions["result"], st.revisions["site"])
+        if self._derived_key != key:
+            self._derived_key, self._derived = key, {}
+        if (name, params) not in self._derived:
+            self._derived[(name, params)] = compute()
+        return self._derived[(name, params)]
+
+    def slope_field(self):
+        from .. import terrain
+
+        return self.derived("slope", (), lambda: terrain.slope(self.state.surface))
+
+    def sessions(self) -> dict:
+        """Per-session QC. Crossovers again, so cached like the QC text."""
+        st = self.state
+        rev = st.revisions
+        key = tuple(rev[t] for t in ("result", "site", "sessions", "vertical",
+                                     "layers")) + (id(st.corrected),)
+        if self._sessions[0] != key:
+            self._sessions = (key, sessions_payload(st))
+        return self._sessions[1]
 
     def qc_text(self) -> str:
         """Crossover QC is a neighbour search over every point, so it is
@@ -226,6 +260,10 @@ class Server:
             "qc": self.qc_text(),
             "info": report.info_bits(st),
             "points_note": views.points_note(st),
+            "sessions": self.sessions(),
+            "terrain": (views.terrain_payload(st, self.slope_field())
+                        if st.surface is not None else None),
+            "scales": self._scales,
             "surface": surface,
             "home": (views.local_extent(site, home) if home is not None
                      else None),
@@ -326,14 +364,41 @@ def create_app(state: AppState | None = None, *, vector_providers=None,
         return Response(data, media_type="application/octet-stream")
 
     @app.get("/api/surface.png")
-    def get_surface(cmap: str = "terrain"):
+    def get_surface(cmap: str = "terrain", mode: str = "elevation",
+                    slope_max: float = 10.0):
+        """The surface as an image: hillshaded elevation, or slope."""
         with srv.acting():
             if st.surface is None:
                 return Response(status_code=404)
-            key = (st.revisions["result"], id(st.surface), cmap)
-            if srv._surface_png[0] != key:
-                srv._surface_png = (key, views.surface_png(st.surface, cmap))
-            return Response(srv._surface_png[1], media_type="image/png")
+            if mode == "slope":
+                data = srv.derived("slope.png", (slope_max,), lambda: views.slope_png(
+                    st.surface, slope_max, srv.slope_field()))
+            else:
+                data = srv.derived("elevation.png", (cmap,),
+                                   lambda: views.surface_png(st.surface, cmap))
+            return Response(data, media_type="image/png")
+
+    @app.get("/api/contours")
+    def get_contours(interval_cm: float = 5.0):
+        with srv.acting():
+            if st.surface is None:
+                return _json(None)
+            if not 0.5 <= interval_cm <= 500:
+                raise UserError("Contours", "The interval must be between "
+                                "0.5 cm and 5 m.", "warning")
+            return _json(srv.derived("contours", (interval_cm,), lambda:
+                         views.contours_payload(st.surface, st.site,
+                                                interval_cm / 100.0)))
+
+    @app.get("/api/drainage")
+    def get_drainage(spacing_m: float = 1.5):
+        with srv.acting():
+            if st.surface is None:
+                return _json(None)
+            spacing_m = min(max(spacing_m, 0.25), 20.0)
+            return _json(srv.derived("drainage", (spacing_m,), lambda:
+                         views.drainage_payload(st.surface, st.site, spacing_m,
+                                                srv.slope_field())))
 
     @app.get("/api/surface/grid")
     def get_grid(cmap: str = "terrain"):
@@ -419,6 +484,26 @@ def create_app(state: AppState | None = None, *, vector_providers=None,
             st.statusMessage.emit(
                 f"Merged {Path(path).name}: {result.added:,} points added")
             return srv.reply(_merge_notice(result, "Export merged"))
+
+    @app.post("/api/sessions/visible")
+    def session_visible(body: dict = Body(...)):
+        with srv.acting("Updating sessions…"):
+            st.set_session_visible(str(body["name"]), bool(body["visible"]))
+            return srv.reply()
+
+    @app.post("/api/sessions/shown")
+    def sessions_shown(body: dict = Body(...)):
+        """Show exactly these sessions: "only this one", or "show all"."""
+        with srv.acting("Updating sessions…"):
+            names = body.get("names")
+            st.set_sessions_shown(st.sessions if names is None else names)
+            return srv.reply()
+
+    @app.post("/api/sessions/surface")
+    def sessions_surface(body: dict = Body(...)):
+        with srv.acting("Rebuilding the surface…"):
+            st.set_surface_from_shown(bool(body["on"]))
+            return srv.reply()
 
     @app.post("/api/sessions")
     def sessions():
@@ -689,6 +774,43 @@ def create_app(state: AppState | None = None, *, vector_providers=None,
             return srv.reply()
 
     # --- Export ----------------------------------------------------------
+
+    def figure_surface():
+        srv.require_data()
+        surface = st.figure_surface()
+        if surface is None:
+            raise UserError("Export failed", "Too few points to grid.", "warning")
+        return surface
+
+    @app.post("/api/export/slope_map")
+    def export_slope_map(body: dict = Body(default={})):
+        from ..io.figures import slope_map
+
+        with srv.acting("Drawing the slope map…"):
+            slope_max = float(body.get("slope_max", 10.0))
+            spacing = float(body.get("spacing_m", 1.5))
+            with srv.guard("Export failed"):
+                data = slope_map(figure_surface(), st.site,
+                                 note=report.figure_note(st),
+                                 slope_max_pct=slope_max, arrow_spacing_m=spacing)
+            download = srv.offer("slope_map.png", data, "image/png")
+            return srv.reply(download=download)
+
+    @app.post("/api/export/contour_map")
+    def export_contour_map(body: dict = Body(default={})):
+        from ..io.figures import heightmap
+
+        with srv.acting("Drawing the contour map…"):
+            interval_cm = float(body.get("interval_cm", 5.0))
+            if not 0.5 <= interval_cm <= 500:
+                raise UserError("Contours", "The interval must be between "
+                                "0.5 cm and 5 m.", "warning")
+            with srv.guard("Export failed"):
+                data = heightmap(figure_surface(), st.site,
+                                 note=report.figure_note(st),
+                                 interval_m=interval_cm / 100.0)
+            download = srv.offer(f"contours_{interval_cm:g}cm.png", data, "image/png")
+            return srv.reply(download=download)
 
     @app.post("/api/export/heightmap")
     def export_heightmap():

@@ -69,6 +69,11 @@ function spec(providers) {
     { label: "Export", items: [
       { label: "Heightmap raster…", run: A.exportHeightmap },
       { label: "Revit points file…", run: A.exportRevit },
+      "-",
+      { label: "Slope map (PNG)…", run: A.exportSlopeMap,
+        tip: "Slope with arrows pointing downhill, at the plan view's slope scale" },
+      { label: "Contour map (PNG)…", run: A.exportContourMap,
+        tip: "Shaded relief with contours at the plan view's interval" },
     ] },
     { label: "View", items: [
       { label: "Reset 2D view", run: A.resetView2D },

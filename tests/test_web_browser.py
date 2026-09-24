@@ -71,7 +71,7 @@ def live(synthetic_zip, tmp_path_factory):
         assert time.time() < deadline, "server did not start"
         time.sleep(0.05)
     yield SimpleNamespace(url=f"http://127.0.0.1:{port}/", state=state,
-                          server=app.state.server)
+                          server=app.state.server, export=synthetic_zip)
     server.should_exit = True
     thread.join(10)
 
@@ -80,7 +80,10 @@ def _reset(live):
     with live.server.acting():
         live.state.plan = Plan()
         live.state.vertical = None
+        live.state.hidden_sessions = set()
+        live.state.surface_from_shown = False
         live.state.plan_changed()
+        live.state.recompute()
 
 
 @pytest.fixture
@@ -448,3 +451,109 @@ def test_the_busy_overlay_is_gone_after_a_failed_action(page, live):
     page.keyboard.press("Enter")
     page.locator("dialog[open]").wait_for()
     assert page.locator("#busy").is_hidden()
+
+
+# --- comparing sessions ----------------------------------------------------------------
+
+@pytest.fixture
+def two_sessions(live, page, synthetic_outing2):
+    """The live server with a second outing merged in, put back afterwards."""
+    with live.server.acting():
+        live.state.add_export(synthetic_outing2)
+    page.evaluate("() => window.yardsurvey.refresh()")
+    page.wait_for_timeout(500)
+    yield live.state.sessions
+    with live.server.acting():
+        live.state.load(live.export)
+
+
+def session_row(page, name):
+    return page.locator("#panel-sessions .session", has_text=name)
+
+
+def test_every_session_is_listed_with_its_repeatability(page, two_sessions):
+    rows = page.locator("#panel-sessions .session")
+    assert rows.count() == 2
+    for name in two_sessions:
+        assert "repeatability" in session_row(page, name).inner_text()
+    assert "Between sessions" in page.locator("#panel-sessions").inner_text()
+
+
+def test_hiding_a_session_takes_its_points_off_the_map(page, live, two_sessions):
+    first = two_sessions[0]
+    session_row(page, first).locator("input[type=checkbox]").uncheck()
+    page.wait_for_timeout(600)
+    assert live.state.hiding == {first}
+    assert "1 session hidden" in page.locator("#map-info").inner_text()
+
+    page.click("#panel-sessions button:has-text('Show all')")
+    page.wait_for_timeout(600)
+    assert live.state.hiding == set()
+
+
+def test_only_shows_one_session(page, live, two_sessions):
+    second = two_sessions[1]
+    session_row(page, second).locator("button:has-text('only')").click()
+    page.wait_for_timeout(600)
+    assert live.state.hiding == {two_sessions[0]}
+
+
+def test_the_surface_can_follow_the_shown_sessions(page, live, two_sessions):
+    session_row(page, two_sessions[0]).locator("input[type=checkbox]").uncheck()
+    page.check("#panel-sessions label:has-text('shown sessions only') input")
+    page.wait_for_timeout(1000)
+    assert live.state.surface_from_shown
+    assert "from 1 of 2 sessions" in page.locator("#qc").inner_text()
+
+
+def test_colour_by_session_matches_the_swatches(page, two_sessions):
+    page.click("#panel-sessions button:has-text('Colour by session')")
+    assert page.locator("#color-by").input_value() == "session"
+
+
+# --- slope, contours and drainage ---------------------------------------------------------
+
+def test_slope_shading_brings_its_own_scale(page):
+    with page.expect_request(lambda r: "/api/surface.png" in r.url and "mode=slope" in r.url):
+        page.select_option("#surface-mode", "slope")
+    legend = page.locator(".map-legend")
+    assert "Slope (%)" in legend.inner_text()
+    assert page.locator("#slope-max-label").is_visible()
+    with page.expect_request(lambda r: "slope_max=6" in r.url):
+        page.fill("#slope-max", "6")
+        page.locator("#slope-max").dispatch_event("change")
+    assert "≥ 6" in legend.inner_text()
+
+
+def test_elevation_shading_says_what_the_colours_mean(page):
+    legend = page.locator(".map-legend")
+    assert "Elevation (ft, raw ellipsoidal)" in legend.inner_text()
+    assert not page.locator("#slope-max-label").is_visible()
+
+
+def test_contours_are_drawn_at_the_chosen_interval(page):
+    with page.expect_response(lambda r: "/api/contours?interval_cm=5" in r.url):
+        page.check("#show-contours")
+    assert "contours every 5 cm" in page.locator(".map-legend").inner_text()
+    with page.expect_response(lambda r: "/api/contours?interval_cm=25" in r.url):
+        page.select_option("#contour-interval", "25")
+
+
+def test_drainage_arrows_are_drawn(page):
+    with page.expect_response(lambda r: "/api/drainage" in r.url) as info:
+        page.check("#show-drainage")
+    assert len(info.value.json()["arrows"]) > 100
+    assert "points downhill" in page.locator(".map-legend").inner_text()
+
+
+def test_the_printed_maps_follow_the_view_settings(page):
+    page.select_option("#contour-interval", "10")
+    page.click("#menubar .menu-root > button:has-text('Export')")
+    with page.expect_download() as info:
+        page.locator("#menubar .menu:visible button.item:has-text('Contour map')").click()
+    assert info.value.suggested_filename == "contours_10cm.png"
+
+    page.click("#menubar .menu-root > button:has-text('Export')")
+    with page.expect_download() as info:
+        page.locator("#menubar .menu:visible button.item:has-text('Slope map')").click()
+    assert info.value.suggested_filename == "slope_map.png"

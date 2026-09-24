@@ -173,7 +173,7 @@ def test_points_are_subsampled_above_the_cap(client, state, monkeypatch):
     points = views.unpack_points(client.get("/api/points").content)
     assert points["total"] == len(state.result)
     assert len(points["x"]) == 1000
-    assert f"showing {1000:,}" in client.get("/api/state").json()["points_note"]
+    assert f"drawing {1000:,}" in client.get("/api/state").json()["points_note"]
 
 
 def test_every_colouring_has_a_colour_per_point(client, state):
@@ -529,7 +529,10 @@ def test_a_project_saves_and_reopens_through_the_api(client, state, tmp_path):
 
     before = s["rev"]["view"]
     s = post(client, "/api/project/open", {"path": s["project_path"]})["state"]
-    assert s["view"] == view
+    assert {k: s["view"][k] for k in view} == view
+    # The session comparison travels with the view.
+    assert s["view"]["hidden_sessions"] == []
+    assert s["view"]["surface_from_shown_sessions"] is False
     assert s["rev"]["view"] > before
 
 
@@ -571,3 +574,91 @@ def test_the_page_is_served_and_always_revalidated(client):
 
 def test_quit_without_a_server_to_stop_says_so(client):
     assert post(client, "/api/quit") == {"stopping": False}
+
+
+# --- sessions ----------------------------------------------------------------------
+
+def test_the_snapshot_describes_each_session(client):
+    sessions = client.get("/api/state").json()["sessions"]
+    (only,) = sessions["list"]
+    assert only["shown"] and only["rms_cm"] < 3.0
+    assert sessions["surface_from_shown"] is False
+
+
+def test_sessions_can_be_hidden_soloed_and_restored(client, synthetic_outing2):
+    s = post(client, "/api/export/add", {"path": str(synthetic_outing2)})["state"]
+    names = [row["name"] for row in s["sessions"]["list"]]
+    assert len(names) == 2 and len(s["sessions"]["pairs"]) == 1
+    everything = views.unpack_points(client.get("/api/points").content)["total"]
+
+    s = post(client, "/api/sessions/visible", {"name": names[0], "visible": False})["state"]
+    assert [row["shown"] for row in s["sessions"]["list"]] == [False, True]
+    assert "1 session hidden" in s["points_note"]
+    fewer = views.unpack_points(client.get("/api/points").content)["total"]
+    assert 0 < fewer < everything
+
+    s = post(client, "/api/sessions/shown", {"names": [names[0]]})["state"]
+    assert [row["shown"] for row in s["sessions"]["list"]] == [True, False]
+    s = post(client, "/api/sessions/shown", {"names": None})["state"]
+    assert all(row["shown"] for row in s["sessions"]["list"])
+
+
+def test_the_surface_can_follow_the_shown_sessions(client, synthetic_outing2):
+    s = post(client, "/api/export/add", {"path": str(synthetic_outing2)})["state"]
+    first = s["sessions"]["list"][0]["name"]
+    post(client, "/api/sessions/shown", {"names": [first]})
+    s = post(client, "/api/sessions/surface", {"on": True})["state"]
+    assert s["sessions"]["surface_from_shown"]
+    assert "from 1 of 2 sessions" in s["qc"]
+    assert "from 1 of 2 sessions" in s["points_note"]
+
+
+# --- terrain -------------------------------------------------------------------------
+
+def test_the_snapshot_carries_what_the_legend_needs(client):
+    s = client.get("/api/state").json()
+    t = s["terrain"]
+    assert 0 < t["slope"]["median"] < t["slope"]["p90"]
+    assert t["mapped_m2"] > 1000 and t["relief_cm"] > 50
+    assert t["elevation"]["lo_ft"] < t["elevation"]["hi_ft"]
+    assert t["elevation"]["datum"] == "raw ellipsoidal"
+    assert {"terrain", "magma_r"} <= set(s["scales"])
+
+
+def test_the_surface_can_be_shaded_by_slope(client):
+    elevation = client.get("/api/surface.png", params={"mode": "elevation"})
+    slope = client.get("/api/surface.png", params={"mode": "slope", "slope_max": 8})
+    assert slope.headers["content-type"] == "image/png"
+    assert slope.content != elevation.content
+
+
+def test_contours_arrive_in_local_metres_labelled_from_the_low_point(client, state):
+    data = client.get("/api/contours", params={"interval_cm": 10}).json()
+    cms = [level["cm"] for level in data["levels"]]
+    assert cms[:3] == [10, 20, 30]
+    assert [level["major"] for level in data["levels"][:2]] == [False, True]
+    xs = [x for level in data["levels"] for line in level["lines"] for x, _ in line]
+    assert -1 < min(xs) and max(xs) < 41, "local metres, not UTM"
+
+
+def test_a_contour_interval_out_of_range_is_refused(client):
+    r = client.get("/api/contours", params={"interval_cm": 0})
+    assert r.status_code == 400 and r.json()["error"]["title"] == "Contours"
+
+
+def test_drainage_arrows_are_unit_vectors_on_measured_ground(client):
+    data = client.get("/api/drainage", params={"spacing_m": 2}).json()
+    assert data["spacing_m"] == 2 and len(data["arrows"]) > 100
+    for x, y, de, dn, pct in data["arrows"]:
+        assert de * de + dn * dn == pytest.approx(1.0, abs=1e-3)
+        assert pct >= 0
+
+
+def test_the_printed_maps_download_as_png(client):
+    for url, body, name in (("/api/export/slope_map", {"slope_max": 8}, "slope_map.png"),
+                            ("/api/export/contour_map", {"interval_cm": 10}, "contours_10cm.png")):
+        reply = post(client, url, body)
+        assert reply["download"]["filename"] == name
+        r = client.get(reply["download"]["url"])
+        assert r.headers["content-type"] == "image/png"
+        assert r.content.startswith(b"\x89PNG")

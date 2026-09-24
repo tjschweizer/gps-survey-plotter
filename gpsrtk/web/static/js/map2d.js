@@ -1,7 +1,8 @@
 // Plan view.
 //
-// Draw order, bottom to top: aerial imagery, the derived surface, reference
-// linework, points, spot markers, then the shot plan (planmap.js).
+// Draw order, bottom to top: aerial imagery, the derived surface (coloured
+// by elevation or by slope), contours, reference linework, points, drainage
+// arrows, spot markers, then the shot plan (planmap.js).
 //
 // Plotted in metres from the site's local origin, not raw UTM - raw northings
 // are ~4.65 million, unreadable on screen and wasteful of float precision -
@@ -15,6 +16,7 @@
 
 import { store, subscribe } from "./store.js";
 import { getBuffer, getJSON } from "./api.js";
+import { h, clear } from "./dom.js";
 
 export const COLORMAPS = ["terrain", "gist_earth", "viridis", "cividis", "magma", "Spectral_r", "gray"];
 export const COLOR_BY = ["elevation", "fix quality", "speed", "session"];
@@ -34,7 +36,14 @@ export const controls = {
   reference: byId("show-reference"),
   colorBy: byId("color-by"),
   cmap: byId("cmap"),
+  mode: byId("surface-mode"),
+  slopeMax: byId("slope-max"),
+  contours: byId("show-contours"),
+  interval: byId("contour-interval"),
+  drainage: byId("show-drainage"),
 };
+const ARROW_COLOUR = "#1fb4c8";
+const ARROW_SPACING_M = 1.5;
 for (const name of COLOR_BY) controls.colorBy.append(new Option(name, name));
 for (const name of COLORMAPS) controls.cmap.append(new Option(name, name));
 controls.cmap.value = "terrain";
@@ -64,6 +73,32 @@ const basemapLayers = new Map();
 
 const surfaceLayer = new ol.layer.Image({ zIndex: 100, opacity: 0.85 });
 map.addLayer(surfaceLayer);
+
+// Contours above the surface, below everything that is a measurement.
+// Labelled every second level, in cm above the lowest measured point.
+const contourSource = new ol.source.Vector();
+const contourStyles = new Map();
+function contourStyle(feature) {
+  const major = feature.get("major");
+  const key = major ? `M${feature.get("cm")}` : "m";
+  let style = contourStyles.get(key);
+  if (!style) {
+    style = new ol.style.Style({
+      stroke: new ol.style.Stroke({ color: major ? "rgba(20,20,20,0.85)" : "rgba(20,20,20,0.6)",
+                                    width: major ? 1.2 : 0.7 }),
+      text: major ? new ol.style.Text({
+        text: String(feature.get("cm")), placement: "line", repeat: 320,
+        font: "600 11px system-ui, sans-serif",
+        fill: new ol.style.Fill({ color: "#111" }),
+        stroke: new ol.style.Stroke({ color: "rgba(255,255,255,0.9)", width: 3 }),
+      }) : undefined,
+    });
+    contourStyles.set(key, style);
+  }
+  return style;
+}
+const contourLayer = new ol.layer.Vector({ source: contourSource, zIndex: 105, style: contourStyle });
+map.addLayer(contourLayer);
 
 const vectorSource = new ol.source.Vector();
 const vectorLayer = new ol.layer.Vector({
@@ -97,6 +132,31 @@ function pointStyle(feature) {
 const pointLayer = new ol.layer.VectorImage({ source: pointSource, zIndex: 120, style: pointStyle });
 map.addLayer(pointLayer);
 
+// Drainage: one fixed-length arrow per lattice point, pointing downhill. The
+// colour under it already says how steep; the arrow says which way.
+const drainSource = new ol.source.Vector();
+const drainLayer = new ol.layer.Vector({ source: drainSource, zIndex: 125 });
+map.addLayer(drainLayer);
+
+function arrowFeature([x, y, de, dn], length) {
+  const tail = [x - (de * length) / 2, y - (dn * length) / 2];
+  const head = [x + (de * length) / 2, y + (dn * length) / 2];
+  const feature = new ol.Feature(new ol.geom.LineString([tail, head]));
+  feature.setStyle([
+    new ol.style.Style({ stroke: new ol.style.Stroke({ color: ARROW_COLOUR, width: 2.2 }) }),
+    new ol.style.Style({
+      geometry: new ol.geom.Point(head),
+      image: new ol.style.RegularShape({
+        points: 3, radius: 5, rotateWithView: true,
+        // A triangle's first point is up (north); turn it to face downhill.
+        rotation: Math.atan2(de, dn),
+        fill: new ol.style.Fill({ color: ARROW_COLOUR }),
+      }),
+    }),
+  ]);
+  return feature;
+}
+
 const markerSource = new ol.source.Vector();
 const markerLayer = new ol.layer.Vector({
   source: markerSource,
@@ -117,6 +177,8 @@ let pointsKey = null;
 let pointsToken = 0;
 let featuresKey = null;
 let homeKey = null;
+let contoursKey = null;
+let drainKey = null;
 
 function syncBasemaps(state) {
   const wanted = new Map(state.basemaps.map((b, i) => [b.name, [b, i]]));
@@ -159,7 +221,11 @@ function syncSurface(state) {
     return;
   }
   const cmap = controls.cmap.value;
-  const url = `/api/surface.png?cmap=${encodeURIComponent(cmap)}&r=${state.rev.result}.${state.rev.site}`;
+  const mode = controls.mode.value;
+  const shade = mode === "slope"
+    ? `mode=slope&slope_max=${slopeMax()}`
+    : `mode=elevation&cmap=${encodeURIComponent(cmap)}`;
+  const url = `/api/surface.png?${shade}&r=${state.rev.result}.${state.rev.site}`;
   const key = url + "|" + state.surface.extent.join(",");
   if (surfaceLayer.get("key") !== key) {
     surfaceLayer.setSource(new ol.source.ImageStatic({
@@ -176,7 +242,8 @@ function syncSurface(state) {
 async function syncPoints(state) {
   const colorBy = controls.colorBy.value;
   const cmap = controls.cmap.value;
-  const key = `${state.rev.result}|${state.rev.site}|${colorBy}|${cmap}`;
+  // Hiding a session redraws the points even when the surface is unchanged.
+  const key = `${state.rev.result}|${state.rev.site}|${state.rev.sessions}|${colorBy}|${cmap}`;
   pointLayer.setVisible(controls.points.checked);
   if (key === pointsKey) return;
   pointsKey = key;
@@ -213,6 +280,90 @@ async function syncFeatures(state) {
   vectorSource.addFeatures(vectors.map((v) => new ol.Feature(new ol.geom.LineString(v.xy))));
 }
 
+function slopeMax() {
+  const v = Number(controls.slopeMax.value);
+  return Number.isFinite(v) && v >= 1 ? Math.min(v, 50) : 10;
+}
+
+async function syncContours(state) {
+  const on = controls.contours.checked && !!state.surface;
+  contourLayer.setVisible(on);
+  if (!on) return;
+  const interval = controls.interval.value;
+  const key = `${state.rev.result}|${state.rev.site}|${interval}`;
+  if (key === contoursKey) return;
+  contoursKey = key;
+  const data = await getJSON(`/api/contours?interval_cm=${interval}`);
+  if (key !== contoursKey) return;
+  contourSource.clear(true);
+  if (!data) return;
+  const features = [];
+  for (const level of data.levels) {
+    for (const line of level.lines) {
+      features.push(new ol.Feature({ geometry: new ol.geom.LineString(line),
+                                     cm: level.cm, major: level.major }));
+    }
+  }
+  contourSource.addFeatures(features);
+}
+
+async function syncDrainage(state) {
+  const on = controls.drainage.checked && !!state.surface;
+  drainLayer.setVisible(on);
+  if (!on) return;
+  const key = `${state.rev.result}|${state.rev.site}`;
+  if (key === drainKey) return;
+  drainKey = key;
+  const data = await getJSON(`/api/drainage?spacing_m=${ARROW_SPACING_M}`);
+  if (key !== drainKey) return;
+  drainSource.clear(true);
+  if (!data) return;
+  const length = 0.6 * data.spacing_m;
+  drainSource.addFeatures(data.arrows.map((a) => arrowFeature(a, length)));
+}
+
+// --- the legend ---------------------------------------------------------------
+
+const legend = h("div", { class: "map-legend", "aria-live": "polite" });
+map.addControl(new ol.control.Control({ element: legend }));
+
+function gradient(stops) {
+  return `linear-gradient(to right, ${stops.map(([t, c]) => `${c} ${(t * 100).toFixed(1)}%`).join(", ")})`;
+}
+
+function syncLegend(state) {
+  const t = state.terrain;
+  const showSurface = controls.surface.checked && t;
+  legend.hidden = !(showSurface || (t && (controls.contours.checked || controls.drainage.checked)));
+  byId("slope-max-label").hidden = controls.mode.value !== "slope";
+  if (legend.hidden) return;
+  clear(legend);
+  if (showSurface) {
+    if (controls.mode.value === "slope") {
+      legend.append(
+        h("div", { class: "legend-title" }, "Slope (%)"),
+        h("div", { class: "bar", style: { background: gradient(state.scales.magma_r) } }),
+        h("div", { class: "ends" }, h("span", {}, "0"), h("span", {}, `≥ ${slopeMax()}`)),
+        h("div", { class: "note" },
+          `median ${t.slope.median?.toFixed(1) ?? "–"}%, p90 ${t.slope.p90?.toFixed(1) ?? "–"}%`));
+    } else {
+      const e = t.elevation;
+      legend.append(
+        h("div", { class: "legend-title" }, `Elevation (ft, ${e.datum})`),
+        h("div", { class: "bar", style: { background: gradient(state.scales[controls.cmap.value]) } }),
+        h("div", { class: "ends" }, h("span", {}, e.lo_ft.toFixed(2)), h("span", {}, e.hi_ft.toFixed(2))),
+        h("div", { class: "note" }, `${t.relief_cm.toFixed(0)} cm relief · ${Math.round(t.mapped_m2).toLocaleString()} m² mapped`));
+    }
+  }
+  if (controls.contours.checked) {
+    legend.append(h("div", { class: "note" },
+      `contours every ${controls.interval.value} cm, labelled in cm above the lowest point`));
+  }
+  if (controls.drainage.checked) {
+    legend.append(h("div", { class: "note" }, h("span", { class: "arrow" }, "➜ "), "points downhill"));
+  }
+}
+
 function syncInfo(state) {
   const bits = [];
   if (controls.points.checked && state.points_note) bits.push(state.points_note);
@@ -239,6 +390,9 @@ export function redraw(state = store.state) {
   syncSurface(state);
   syncPoints(state).catch((err) => console.error(err));
   syncFeatures(state).catch((err) => console.error(err));
+  syncContours(state).catch((err) => console.error(err));
+  syncDrainage(state).catch((err) => console.error(err));
+  syncLegend(state);
   syncInfo(state);
 }
 
@@ -256,6 +410,12 @@ for (const el of Object.values(controls)) {
   el.addEventListener(el.type === "range" ? "input" : "change", () => redraw());
 }
 
+/** Colour the points by session: what the Sessions panel's swatches mean. */
+export function colourBySession() {
+  controls.colorBy.value = "session";
+  redraw();
+}
+
 // --- view settings, as saved in a project ------------------------------------------
 
 export function viewSettings() {
@@ -267,6 +427,11 @@ export function viewSettings() {
     show_points: controls.points.checked,
     show_reference: controls.reference.checked,
     surface_opacity: Number(controls.opacity.value),
+    surface_mode: controls.mode.value,
+    slope_max: slopeMax(),
+    show_contours: controls.contours.checked,
+    contour_interval_cm: Number(controls.interval.value),
+    show_drainage: controls.drainage.checked,
   };
 }
 
@@ -275,10 +440,16 @@ export function applyView(v) {
   if (COLORMAPS.includes(v.colormap)) controls.cmap.value = v.colormap;
   if (COLOR_BY.includes(v.color_by)) controls.colorBy.value = v.color_by;
   for (const [key, el] of [["show_imagery", controls.imagery], ["show_surface", controls.surface],
-                           ["show_points", controls.points], ["show_reference", controls.reference]]) {
+                           ["show_points", controls.points], ["show_reference", controls.reference],
+                           ["show_contours", controls.contours], ["show_drainage", controls.drainage]]) {
     if (key in v) el.checked = !!v[key];
   }
   if ("surface_opacity" in v) controls.opacity.value = String(v.surface_opacity);
+  if (v.surface_mode === "slope" || v.surface_mode === "elevation") controls.mode.value = v.surface_mode;
+  if (Number(v.slope_max) >= 1) controls.slopeMax.value = String(v.slope_max);
+  if ([...controls.interval.options].some((o) => Number(o.value) === Number(v.contour_interval_cm))) {
+    controls.interval.value = String(Number(v.contour_interval_cm));
+  }
   redraw();
 }
 

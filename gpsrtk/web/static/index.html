@@ -21,6 +21,10 @@
       <summary>Layers</summary>
       <div class="body"></div>
     </details>
+    <details class="panel" id="panel-sessions" open>
+      <summary>Sessions</summary>
+      <div class="body"></div>
+    </details>
     <details class="panel" id="panel-chain" open>
       <summary>Filter stack</summary>
       <div class="body"></div>
@@ -38,13 +42,31 @@
     <section id="view-plan" class="view" role="tabpanel">
       <div class="toolbar" id="map-toolbar">
         <label><input type="checkbox" id="show-imagery" checked> imagery</label>
-        <label><input type="checkbox" id="show-surface" checked> surface</label>
-        <input type="range" id="surface-opacity" min="0" max="100" value="85"
-               title="surface opacity over the imagery">
         <label><input type="checkbox" id="show-points" checked> points</label>
         <label><input type="checkbox" id="show-reference" checked> reference</label>
         <label class="gap">colour <select id="color-by"></select></label>
         <label>map <select id="cmap"></select></label>
+      </div>
+      <div class="toolbar" id="terrain-toolbar">
+        <label><input type="checkbox" id="show-surface" checked> surface</label>
+        <input type="range" id="surface-opacity" min="0" max="100" value="85"
+               title="surface opacity over the imagery">
+        <label class="gap">shade
+          <select id="surface-mode" title="what the surface colour shows">
+            <option value="elevation">elevation</option>
+            <option value="slope">slope</option>
+          </select></label>
+        <label id="slope-max-label" title="slopes at or above this are drawn darkest">max
+          <input type="number" id="slope-max" min="1" max="50" step="1" value="10"> %</label>
+        <label class="gap"><input type="checkbox" id="show-contours"> contours every
+          <select id="contour-interval" title="contour interval">
+            <option value="2">2 cm</option>
+            <option value="5" selected>5 cm</option>
+            <option value="10">10 cm</option>
+            <option value="25">25 cm</option>
+            <option value="50">50 cm</option>
+          </select></label>
+        <label class="gap" title="arrows point downhill"><input type="checkbox" id="show-drainage"> drainage</label>
       </div>
       <div id="map" tabindex="0"></div>
       <div id="map-info" class="map-info"></div>
