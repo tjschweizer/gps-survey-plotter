@@ -23,10 +23,12 @@ filter stack, **Datum ▸ Solve local datum**, then **File ▸ Save project**.
 ## The browser UI
 
 The window is the one the desktop app had, in a browser tab: the same menus
-and shortcuts, layers and the filter stack on the left, the plan view and a
-3D tab in the middle with the measured QC underneath, and the basemaps, the
-shot plan and the vertical datum on the right. The docks and the QC pane
-resize by dragging their edges.
+and shortcuts, the layers, sessions and the filter stack on the left, the plan
+view and a 3D tab in the middle with the measured QC underneath, and the
+basemaps, the shot plan and the vertical datum on the right. The docks and the
+QC pane resize by dragging their edges. The plan view has two toolbar rows:
+what to draw on top, and how to show the surface underneath - shaded by
+elevation or by slope, with contours and drainage arrows.
 
 A few things work differently because it is a web page:
 
@@ -37,8 +39,9 @@ A few things work differently because it is a web page:
 - **Exports download.** **Export ▸ Heightmap raster** and **Export ▸ Revit
   points file** arrive as zips in the browser's download folder: the 16-bit
   heightmap with its mask, world file and preview; the points file with its
-  `_ORIGIN.txt` sidecar. **Plan ▸ Print field sheet** opens the sheet in a
-  new tab to print, still self-contained for use without a network.
+  `_ORIGIN.txt` sidecar. **Export ▸ Slope map** and **Export ▸ Contour map**
+  arrive as PNGs. **Plan ▸ Print field sheet** opens the sheet in a new tab
+  to print, still self-contained for use without a network.
 - **Esc** puts a drawing tool down, and **Delete** in the shot-plan table
   deletes the selected rows. In the table, the first click on a row selects
   it and a click on a selected row edits the cell; Shift and Ctrl extend the
@@ -63,8 +66,9 @@ environment lives elsewhere.
 
     uv run pytest
 
-About 265 tests run anywhere, most of them against a small synthetic export
-(`tests/synthetic.py`) written to look like a SW Maps export of a mowed lot.
+About 315 tests run anywhere, most of them against a small synthetic export
+(`tests/synthetic.py`) written to look like a SW Maps export of a mowed lot,
+with a second outing over the same ground on a mount 5 cm higher.
 Around 50 more need a real survey export and skip without one, because the
 numbers they pin are measured facts about real ground rather than properties
 of the code. Point `tests/conftest.py` at an export of your own to run them.
@@ -143,12 +147,75 @@ without touching the benchmark.
 A merge discards any solved vertical model, because that model was solved for a
 set of sessions that no longer exists.
 
+## Comparing sessions
+
+A merged layer is several outings, and one pooled crossover RMS says how good
+they are together and nothing about which of them is the weak one. The
+**Sessions** panel lists each outing in the active layer, with its own colour,
+and the numbers to compare them by:
+
+- points logged, the share that was RTK fixed, how many the filter stack kept,
+  and how long the outing ran;
+- **repeatability** - crossovers between the outing's own passes (within
+  30 cm, more than 60 s apart). This is the figure to compare outings by: it
+  measures the outing against itself, so a step between outings cannot
+  inflate it;
+- its solved offset, once **Datum ▸ Solve** has run;
+- for each pair that shares ground, how far apart they sit - later minus
+  earlier - as logged, and again after the solved offsets, which is how to
+  see that the correction did its job.
+
+Every session has a checkbox that takes its points off the map, and an
+**only** button that shows it alone; **Colour by session** colours the points
+to match the swatches. A session's colour belongs to it, so hiding one never
+recolours the others.
+
+By default hiding a session only changes what is drawn. Tick **Surface and QC
+from shown sessions only** and hidden sessions also leave the surface, the 3D
+view, the QC readout and the exports, so one outing's surface can be looked
+at, and its QC read, on its own. The QC readout and the map both say when a
+subset is in use. The vertical model is still solved from every session:
+looking at one outing never moves the datum under the others.
+
+The numbers describing a session do not change when it is hidden. They are
+measured on the filtered, corrected points of every session.
+
+## Slope, drainage and contours
+
+The second toolbar row of the plan view shows what the surface says about the
+ground:
+
+- **shade: slope** colours the surface by slope, in percent grade, from pale
+  (flat) to black at the **max** you choose (10% by default). The legend gives
+  the median and 90th-percentile slope.
+- **drainage** draws an arrow every 1.5 m pointing downhill. Every arrow is
+  the same length: the colour underneath says how steep, the arrow says which
+  way the water goes.
+- **contours** draws contour lines every 2, 5, 10, 25 or 50 cm, labelled in
+  centimetres above the lowest measured point, so the labels read as fall
+  even before the datum is tied to anything.
+
+**Export ▸ Slope map** and **Export ▸ Contour map** turn the same views into
+finished figures: a title naming the data they were drawn from (the filter
+choices, and the sessions when only some are used), axes in metres from the
+local origin, a north arrow and a colour bar. The slope map uses the plan
+view's slope scale; the contour map is shaded relief coloured by height above
+the low point, with contours at the plan view's interval.
+
+None of these draw ground that was not measured: slope, arrows and contours
+stop at the edge of the survey, and the figures outline it. Slope is taken
+after smoothing over 0.5 m - the bin size, below which there is no measured
+detail - so it comes out the same on screen and in a figure gridded at 8 cm.
+The QC readout's **Terrain** line gives the median, 90th-percentile and
+maximum slope, and the area actually mapped.
+
 ## Projects
 
 `File ▸ Save project` writes a `.yardproj` recording the site, every export
 that was loaded, the filter chain, the vertical model, which basemaps are on and at
 what opacity, the shot plan, the imagery alignment offset, and the view
-settings. Reopening reproduces the **exact** same
+settings - including which sessions are hidden and whether they are left out
+of the surface, since that changes what the surface is. Reopening reproduces the **exact** same
 elevations, because the solved vertical terms are stored and re-applied rather
 than re-solved - a fresh solve against slightly different inputs would drift
 silently.
@@ -249,15 +316,18 @@ criteria: if they move, that is a regression unless CLAUDE.md is updated too.
       site.py       CRS, local origin, vertical datum, surfacing defaults
       surface.py    bin -> grid -> distance mask -> smooth
       vertical.py   geoid, laser level network, session offsets, datum tie
-      qc.py         crossover residuals
+      qc.py         crossover residuals, pooled and per session
+      terrain.py    slope, downhill direction, contours, mapped area
       model/
         pointset.py canonical PointSet
         adjust.py   least-squares engine shared by the network and the offsets
-      io/           readers, imagery/vector providers, exporters
+      io/           readers, imagery/vector providers, exporters,
+                    and the printed slope and contour maps (figures.py)
       filters/      serialisable filter chain
       app/          the application, with no GUI
         state.py      what is loaded, filtered, solved and fetched
         plan_edit.py  the rules behind the shot-plan table and map
+        sessions.py   per-session quality, for the Sessions panel
         report.py     every readout and notice, as text
         views.py      what the plan and 3D views draw
       web/          the browser UI
