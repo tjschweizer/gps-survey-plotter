@@ -92,6 +92,7 @@ These were set by the owner and apply to every item.
 | Desktop baseline (Windows, `12a34e0`) | 285 passed, 50 skipped, 40 deselected | 35 passed |
 | After C8 | 287 passed, 50 skipped, 40 deselected | — |
 | After C11 | 288 passed, 51 skipped (+1: `tzset` test on Windows), 40 deselected | — |
+| After C12 | 292 passed, 51 skipped, 40 deselected | — |
 
 Of the 55 skips, 50 need real data. The other 5 are network tests that the
 sandbox proxy refused.
@@ -143,8 +144,8 @@ These answers change the designs in section 5.
 | 2 | C4 | A non-survey file leaves the session alone | code health | ✅ `8e43c58` |
 | 3 | C9 | Layer names come from the files inside the export | code health | ✅ `02a7c76` |
 | 4 | C8 | Normalise the `type` attribute | processing | ✅ `ae4c254` |
-| 5 | C11 | Correct daylight-saving times for `.swmz` | processing | ✅ |
-| 6 | C12 | Instrument height guard | processing | todo |
+| 5 | C11 | Correct daylight-saving times for `.swmz` | processing | ✅ `731a4e4` |
+| 6 | C12 | Instrument height guard | processing | ✅ |
 | 7 | C7 | Rod entry guard: feet, inches and fractions | workflow | todo |
 | 8 | C1 | Every rod shot joins the level network | processing | todo |
 | 9 | C2 | Station identities: plan shots vs SW Maps records | processing | todo (**format/meaning**) |
@@ -258,7 +259,15 @@ the review session's scratchpad.
 - **Breaking?:** re-read winter `.swmz` times move by 1 h. A session's date
   can only change for points within an hour of midnight.
 
-**C12 — Instrument height guard**
+**C12 — Instrument height guard** ✅
+- **Done:** `merge.instrument_height_notes`, called from `AppState.load`
+  into `MergeReport.notes`. The open-export route now shows a notice when
+  there are notes (it only did for re-projection before), as does the
+  add-export route when nothing was loaded yet; `load_project` passes the
+  notes on as warnings. Tests: `test_merge.py::test_a_set_instrument_height_*`,
+  `::test_an_instrument_height_that_changes_mid_session_is_reported`,
+  `::test_an_unset_instrument_height_says_nothing`,
+  `test_web_api.py::test_opening_an_export_with_instrument_height_says_so`.
 - **What:** on load, warn if `ANT_HT` (SW Maps "Instrument Ht") is non-zero
   anywhere, or varies within a session. Say that it is not applied. Carry the
   warning in `MergeReport.notes`, so it shows in the open/merge notice.

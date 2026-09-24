@@ -250,6 +250,47 @@ def test_the_type_attribute_is_normalised(tmp_path):
     assert list(kinds[:4]) == ["lawn", "lawn", "lawn", "bldg"]
 
 
+def _export_with_instrument_ht(path, heights):
+    import zipfile
+
+    from synthetic import track_points
+
+    tracks = track_points().head(400)
+    tracks["Instrument Ht"] = heights
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr(f"{path.stem}_TRACK_POINTS.csv", tracks.to_csv(index=False))
+    return path
+
+
+def test_a_set_instrument_height_is_reported_and_not_applied(fresh, tmp_path):
+    """SW Maps' Instrument Ht is never applied. If it was ever set, the
+    heights would mix conventions with other exports unless it is said."""
+    path = _export_with_instrument_ht(tmp_path / "Pole.zip", 1.8)
+    report = fresh.load(path)
+    text = "\n".join(report.notes)
+    assert "Instrument Ht is set in Pole.zip" in text
+    assert "1.8 m" in text and "not applied" in text
+    assert "changes within a session" not in text
+    # Not applied: the heights are exactly what the receiver reported.
+    from gpsrtk.model.pointset import elevation_column
+    ps = fresh.layers["track_points"]
+    assert elevation_column(ps) == P.Z
+
+
+def test_an_instrument_height_that_changes_mid_session_is_reported(fresh, tmp_path):
+    import numpy as np
+
+    path = _export_with_instrument_ht(tmp_path / "Mixed.zip",
+                                      np.r_[np.zeros(200), np.full(200, 1.8)])
+    text = "\n".join(fresh.load(path).notes)
+    assert "changes within a session" in text
+    assert "Mixed/2026-08-27" in text
+
+
+def test_an_unset_instrument_height_says_nothing(fresh, synthetic_zip):
+    assert not [n for n in fresh.load(synthetic_zip).notes if "Instrument" in n]
+
+
 def test_opening_replaces_rather_than_merges(fresh, synthetic_zip, synthetic_outing2):
     fresh.load(synthetic_zip)
     n = len(fresh.layers["track_points"])

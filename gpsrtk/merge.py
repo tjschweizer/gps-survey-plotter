@@ -305,6 +305,50 @@ def unlinked_sessions(names, overlaps) -> list[str]:
     return sorted(n for n in names if n not in main)
 
 
+def instrument_height_notes(layers: dict[str, PointSet], name: str) -> list[str]:
+    """Warn when SW Maps' `Instrument Ht` was set, since it is never applied.
+
+    Heights here are antenna heights: the session offsets and the datum tie
+    absorb the height of the antenna above ground. The column is read and
+    carried, but nothing subtracts it, so an export where it was set would
+    mix conventions with every export where it was not - silently, unless it
+    is said here. A value that changes within a session is worth saying
+    separately: it records a mount change the heights themselves carry.
+    """
+    from .model.pointset import ANT_HT
+
+    set_in: list[str] = []
+    varies: list[str] = []
+    for label, ps in layers.items():
+        d = ps.df
+        if ANT_HT not in d.columns:
+            continue
+        values = pd.to_numeric(d[ANT_HT], errors="coerce")
+        if not (values.fillna(0.0) != 0.0).any():
+            continue
+        shown = sorted({round(float(v), 3) for v in values.dropna().unique()})
+        set_in.append(f"{label} ({', '.join(f'{v:g}' for v in shown[:5])}"
+                      f"{', ...' if len(shown) > 5 else ''} m)")
+        if SESSION in d.columns:
+            for session, part in values.groupby(d[SESSION].astype(str)):
+                if part.dropna().nunique() > 1:
+                    varies.append(f"{session} in {label} "
+                                  f"({part.min():g} to {part.max():g} m)")
+    if not set_in:
+        return []
+    notes = [f"NOTE: Instrument Ht is set in {name}: " + "; ".join(set_in)
+             + ". It is not applied. Heights stay antenna heights, and the "
+             "session offsets and the datum tie absorb the antenna height, "
+             "so mixing this export with one where it was not set is safe "
+             "only because the value is ignored."]
+    if varies:
+        notes.append("NOTE: Instrument Ht changes within a session: "
+                     + "; ".join(varies) + ". A mount that changed height "
+                     "mid-session steps the heights, and one offset per "
+                     "session cannot remove it.")
+    return notes
+
+
 def diagnose(ps: PointSet, **kw) -> MergeReport:
     """Sessions, overlaps, and what cannot be reconciled — without merging."""
     report = MergeReport()

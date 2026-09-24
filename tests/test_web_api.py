@@ -353,6 +353,21 @@ def test_a_merge_that_cannot_be_reconciled_is_a_warning(
     assert notice["actions"] == []
 
 
+def test_opening_an_export_with_instrument_height_says_so(client, tmp_path):
+    import zipfile
+
+    from synthetic import track_points
+
+    tracks = track_points().head(200)
+    tracks["Instrument Ht"] = 1.8
+    path = tmp_path / "Pole.zip"
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("Pole_TRACK_POINTS.csv", tracks.to_csv(index=False))
+    notice = post(client, "/api/export/open", {"path": str(path)})["notice"]
+    assert "Instrument Ht is set" in notice["text"]
+    assert "not applied" in notice["text"]
+
+
 def test_opening_a_missing_file_is_an_error_not_a_crash(client, tmp_path):
     error = post(client, "/api/export/open", {"path": str(tmp_path / "nope.zip")},
                  400)["error"]

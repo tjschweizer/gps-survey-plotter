@@ -462,11 +462,16 @@ def create_app(state: AppState | None = None, *, vector_providers=None,
         with srv.acting("Reading export…"), srv.guard("Could not open"):
             result = st.load(path)
         srv.remember_dir(path)
+        parts = []
         if result.reprojected:
+            parts.append("These layers were re-projected into the site's CRS "
+                         f"(EPSG:{st.site.epsg}):\n\n  "
+                         + "\n  ".join(result.reprojected))
+        parts += result.notes
+        if parts:
             return srv.reply(notice(
-                "Coordinate system",
-                "These layers were re-projected into the site's CRS "
-                f"(EPSG:{st.site.epsg}):\n\n  " + "\n  ".join(result.reprojected)))
+                "Coordinate system" if result.reprojected and not result.notes
+                else "Export opened", "\n\n".join(parts)))
         return srv.reply()
 
     @app.post("/api/export/add")
@@ -475,8 +480,11 @@ def create_app(state: AppState | None = None, *, vector_providers=None,
         with srv.acting("Merging export…"):
             if not st.layers:
                 with srv.guard("Could not open"):
-                    st.load(path)
+                    result = st.load(path)
                 srv.remember_dir(path)
+                if result.notes:
+                    return srv.reply(notice("Export opened",
+                                            "\n\n".join(result.notes)))
                 return srv.reply()
             with srv.guard("Could not add"):
                 result = st.add_export(path)

@@ -40,7 +40,7 @@ from ..io.imagery import (ImageryProvider, NoCoverageError, RasterLayer,
                           default_providers, terrain_providers)
 from ..io.vector import VectorLayer, default_vector_providers
 from ..merge import MergeReport, crs_disagreement_m, diagnose, \
-    merge_layers, reproject
+    instrument_height_notes, merge_layers, reproject
 from ..model.pointset import PointSet, E, N, SESSION
 from ..georef import ImageryOffset, solve_imagery_offset
 from ..plan import Plan
@@ -205,6 +205,7 @@ class AppState:
                 "has easting, northing and elevation columns. Nothing loaded "
                 "has been changed.")
         report = MergeReport()
+        report.notes += instrument_height_notes(exp.layers, path.name)
 
         incoming, reprojected = self._reconcile_crs(exp.layers)
         report.reprojected = reprojected
@@ -667,7 +668,10 @@ class AppState:
                 warnings.append(f"source not found: {src}")
                 continue
             try:
-                self.load(src, merge=bool(self.sources))
+                loaded = self.load(src, merge=bool(self.sources))
+                # The model is cleared above, so the only notes a load can
+                # make here are about the export itself (Instrument Ht).
+                warnings += loaded.notes
             except Exception as exc:                      # noqa: BLE001
                 warnings.append(f"could not load {Path(src).name}: {exc}"[:160])
 
