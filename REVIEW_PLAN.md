@@ -32,8 +32,7 @@ These were set by the owner and apply to every item.
 
 ### How to work
 
-- Work on a feature branch, never on `main`. The branch in use is
-  `claude/lucid-tesla-8djknx`.
+- Work on the 'main' branch.
 - Implement items one at a time, in the order below. Make one commit per item,
   with the item's ID as the commit-message prefix, for example
   `C8: Normalise the type attribute`.
