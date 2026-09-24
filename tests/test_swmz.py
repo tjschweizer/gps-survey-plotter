@@ -171,6 +171,54 @@ def test_times_are_naive_local_like_the_csv_reader(swm2):
     assert d[P.TZ].iloc[0].isupper() and " " not in d[P.TZ].iloc[0]
 
 
+def test_each_time_uses_the_offset_for_its_own_date():
+    """Winter and summer epochs each take their own zone offset, not the one
+    in force on the day the file is read. Checked against the platform's own
+    conversion, so it means something on any machine whose zone has DST."""
+    import datetime as dt
+
+    import pandas as pd
+
+    from gpsrtk.io.swmaps_project import _local_times
+
+    jan = int(dt.datetime(2026, 1, 15, 18, 0, tzinfo=dt.timezone.utc).timestamp() * 1000)
+    jul = int(dt.datetime(2026, 7, 15, 18, 0, tzinfo=dt.timezone.utc).timestamp() * 1000)
+    times, _ = _local_times(pd.Series([jan, jul]))
+    assert times.iloc[0] == pd.Timestamp(dt.datetime.fromtimestamp(jan / 1000))
+    assert times.iloc[1] == pd.Timestamp(dt.datetime.fromtimestamp(jul / 1000))
+
+
+@pytest.fixture
+def central_time(monkeypatch):
+    import time
+
+    if not hasattr(time, "tzset"):
+        pytest.skip("time.tzset is not available on this platform")
+    monkeypatch.setenv("TZ", "America/Chicago")
+    time.tzset()
+    yield
+    monkeypatch.undo()
+    time.tzset()
+
+
+def test_winter_times_are_standard_time(central_time):
+    """18:00 UTC in January is 12:00 CST; it used to come out as 13:00 "CDT"
+    when read in summer."""
+    import datetime as dt
+
+    import pandas as pd
+
+    from gpsrtk.io.swmaps_project import _local_times
+
+    jan = int(dt.datetime(2026, 1, 15, 18, 0, tzinfo=dt.timezone.utc).timestamp() * 1000)
+    jul = int(dt.datetime(2026, 7, 15, 18, 0, tzinfo=dt.timezone.utc).timestamp() * 1000)
+    times, zones = _local_times(pd.Series([jan, jul]))
+    assert times.iloc[0] == pd.Timestamp("2026-01-15 12:00")
+    assert zones.iloc[0] == "CST"
+    assert times.iloc[1] == pd.Timestamp("2026-07-15 13:00")
+    assert zones.iloc[1] == "CDT"
+
+
 def test_sessions_are_labelled_by_file_and_date(swm2):
     session = read_any(swm2)["track_points"].df[P.SESSION].iloc[0]
     assert session == "proj/2026-09-23"

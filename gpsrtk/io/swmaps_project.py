@@ -22,7 +22,8 @@ which is the rounding of the exported three-decimal metres, so the two paths
 agree exactly.
 
 Times are stored as epoch milliseconds with no zone. They are converted using
-the machine's local zone, because that is what the device was displaying when
+the machine's local zone - with the daylight-saving rule for each timestamp's
+own date - because that is what the device was displaying when
 the survey was recorded and what the CSV export writes out. A project surveyed
 in one zone and processed in another would therefore land on the wrong local
 clock; only session dating depends on it, and crossover separations, which are
@@ -251,11 +252,24 @@ def _local_times(ms: pd.Series) -> tuple[pd.Series, pd.Series]:
 
     Naive local is what the CSV reader produces, so the two paths can be
     concatenated without one set of timestamps sitting hours from the other.
+
+    Each timestamp is converted with the local rule for its own date, not
+    the offset in force today: a January outing processed in July used to
+    come out an hour late and labelled "CDT". The offset is looked up once
+    per whole minute, since zones change offset only on the minute, which
+    keeps a 10 Hz outing to a few dozen lookups.
     """
-    zone = _dt.datetime.now().astimezone().tzinfo
-    t = pd.to_datetime(pd.to_numeric(ms, errors="coerce"), unit="ms", utc=True)
-    local = t.dt.tz_convert(zone)
-    return local.dt.tz_localize(None), local.dt.strftime("%Z").map(_abbreviate)
+    ms = pd.to_numeric(ms, errors="coerce")
+    minute = (ms // 60_000) * 60
+    offsets: dict[float, float] = {}
+    names: dict[float, str] = {}
+    for m in minute.dropna().unique():
+        local = _dt.datetime.fromtimestamp(m, _dt.timezone.utc).astimezone()
+        offsets[m] = local.utcoffset().total_seconds()
+        names[m] = _abbreviate(local.tzname() or "")
+    utc = pd.to_datetime(ms, unit="ms")
+    shift = pd.to_timedelta(minute.map(offsets), unit="s")
+    return utc + shift, minute.map(names)
 
 
 def _abbreviate(zone: str) -> str:

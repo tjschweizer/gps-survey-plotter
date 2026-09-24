@@ -91,6 +91,7 @@ These were set by the owner and apply to every item.
 | After C5, C4, C9 | 285 passed, 55 skipped, 35 deselected | not re-run (no UI change yet) |
 | Desktop baseline (Windows, `12a34e0`) | 285 passed, 50 skipped, 40 deselected | 35 passed |
 | After C8 | 287 passed, 50 skipped, 40 deselected | — |
+| After C11 | 288 passed, 51 skipped (+1: `tzset` test on Windows), 40 deselected | — |
 
 Of the 55 skips, 50 need real data. The other 5 are network tests that the
 sandbox proxy refused.
@@ -141,8 +142,8 @@ These answers change the designs in section 5.
 | 1 | C5 | Despike ignores missing heights | processing | ✅ `c9a4330` |
 | 2 | C4 | A non-survey file leaves the session alone | code health | ✅ `8e43c58` |
 | 3 | C9 | Layer names come from the files inside the export | code health | ✅ `02a7c76` |
-| 4 | C8 | Normalise the `type` attribute | processing | ✅ |
-| 5 | C11 | Correct daylight-saving times for `.swmz` | processing | todo |
+| 4 | C8 | Normalise the `type` attribute | processing | ✅ `ae4c254` |
+| 5 | C11 | Correct daylight-saving times for `.swmz` | processing | ✅ |
 | 6 | C12 | Instrument height guard | processing | todo |
 | 7 | C7 | Rod entry guard: feet, inches and fractions | workflow | todo |
 | 8 | C1 | Every rod shot joins the level network | processing | todo |
@@ -238,7 +239,13 @@ the review session's scratchpad.
 - **Breaking?:** a re-solve may include shots that were dropped before. Stored
   models are unchanged.
 
-**C11 — Correct daylight-saving times for `.swmz`**
+**C11 — Correct daylight-saving times for `.swmz`** ✅
+- **Done:** `_local_times` looks up the local offset and zone name per whole
+  minute of data, from `datetime.fromtimestamp(..., utc).astimezone()`.
+  Tests: `test_swmz.py::test_each_time_uses_the_offset_for_its_own_date`
+  (runs everywhere, compares with the platform's own conversion; failed
+  before the fix on the Central-time desktop) and
+  `::test_winter_times_are_standard_time` (sets `TZ`; skips on Windows).
 - **What:** `io/swmaps_project.py:_local_times` uses the machine's *current*
   UTC offset for every timestamp. Convert each timestamp with the local rule
   for its own date instead: `datetime.fromtimestamp(sec)` with no argument, or
