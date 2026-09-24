@@ -48,6 +48,19 @@ def test_cache_reuse_is_transparent(tracks):
     assert warm_out.df[P.Z].sum() == pytest.approx(cold_out.df[P.Z].sum())
 
 
+def test_despike_survives_a_missing_height(state):
+    """One blank elevation must cost one point, not the whole layer."""
+    import numpy as np
+
+    d = state.source.df.copy()
+    d.loc[5, P.Z] = np.nan
+    ps = state.source.with_frame(d, "one blank height")
+    out = F.PercentileDespike().apply(ps)
+    clean = F.PercentileDespike().apply(state.source)
+    assert len(out) >= len(clean) - 2
+    assert out.df[P.Z].notna().all()
+
+
 def test_chain_round_trips_through_json(tracks):
     chain = F.default_chain()
     chain.stages[2].enabled = True

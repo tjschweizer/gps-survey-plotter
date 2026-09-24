@@ -94,6 +94,11 @@ class PercentileDespike(Stage):
     Deliberately blunt and symmetric, matching the archive scripts. It removes
     single-epoch blunders, not systematic error: a whole float episode sitting
     30 cm low passes through this untouched.
+
+    A row with no height at all is dropped here too, and does not take part
+    in the percentiles. One blank elevation in an export used to make both
+    percentiles NaN, and every comparison against NaN is false - so the stage
+    silently removed every point.
     """
 
     kind, label = "percentile_despike", "despike"
@@ -109,9 +114,12 @@ class PercentileDespike(Stage):
     def apply(self, ps: PointSet) -> PointSet:
         if len(ps) == 0:
             return ps
-        z = ps.df[Z].to_numpy()
-        lo, hi = np.percentile(z, [self.low, self.high])
-        return ps.select((z >= lo) & (z <= hi), self.describe())
+        z = ps.df[Z].to_numpy(dtype=float)
+        have = np.isfinite(z)
+        if not have.any():
+            return ps.select(have, self.describe())
+        lo, hi = np.percentile(z[have], [self.low, self.high])
+        return ps.select(have & (z >= lo) & (z <= hi), self.describe())
 
 
 @register
