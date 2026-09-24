@@ -27,28 +27,28 @@ def test_row_zero_is_the_south_edge(surf):
     assert surf.extent.ymin < surf.extent.ymax
 
 
-def test_mesh_ravel_matches_the_array(surf):
-    """The 3D view ravels in C order onto x-fastest ImageData. If that pairing
-    is ever wrong the terrain transposes silently."""
-    pv = pytest.importorskip("pyvista")
+def test_the_3d_grid_pairs_rows_with_northings(surf, site):
+    """The 3D view draws z[i][j] at (x[j], y[i]). If rows and columns were
+    ever paired with the wrong axis, the terrain would transpose silently."""
+    from gpsrtk.app.views import surface_grid
 
+    g = surface_grid(surf, site)
     ny, nx = surf.z.shape
-    grid = pv.ImageData(dimensions=(nx, ny, 1),
-                        spacing=(surf.px, surf.px, 1.0),
-                        origin=(surf.extent.xmin, surf.extent.ymin, 0.0))
-    grid["warp"] = surf.z.ravel(order="C")
+    assert len(g["y"]) == len(g["z"]) == ny
+    assert len(g["x"]) == len(g["z"][0]) == nx
+    assert g["x"] == sorted(g["x"]) and g["y"] == sorted(g["y"]), \
+        "east and north both increase"
+    x0, y0 = site.to_local(surf.extent.xmin, surf.extent.ymin)
+    assert (g["x"][0], g["y"][0]) == pytest.approx((x0, y0), abs=1e-3)
 
-    corners = {
-        0: surf.z[0, 0],
-        nx - 1: surf.z[0, -1],
-        (ny - 1) * nx: surf.z[-1, 0],
-        ny * nx - 1: surf.z[-1, -1],
-    }
-    for idx, expected in corners.items():
-        assert grid["warp"][idx] == pytest.approx(expected)
-
-    # The test only means something if the corners actually differ.
-    assert len(set(np.round(list(corners.values()), 4))) > 1
+    corners = {(0, 0): surf.z_masked[0, 0], (0, -1): surf.z_masked[0, -1],
+               (-1, 0): surf.z_masked[-1, 0], (-1, -1): surf.z_masked[-1, -1]}
+    for (i, j), expected in corners.items():
+        got = g["z"][i][j]
+        if np.isnan(expected):
+            assert got is None, "unmeasured cells stay empty"
+        else:
+            assert got == pytest.approx(expected, abs=1e-4)
 
 
 def test_world_file_points_at_the_north_west_pixel_centre(surf):

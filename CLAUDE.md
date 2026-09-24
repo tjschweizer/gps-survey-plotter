@@ -121,7 +121,9 @@ module top.
 
 ## Open work
 
-- UI for processing and acquisition planning (this project).
+- UI for processing and acquisition planning (this project). A browser UI
+  served locally by `gpsrtk.web` over the GUI-free `gpsrtk.app`; see the
+  README. It binds to 127.0.0.1 only - keep it that way.
 - Tie vertical datum to the Revit model.
 - Re-shoot house corners; current diagonals disagree by 1.1 ft.
 - Fill west/northwest canopy gap.
