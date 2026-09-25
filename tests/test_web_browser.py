@@ -802,3 +802,21 @@ def test_rod_is_the_second_column_and_stays_in_view(page, live):
     page.locator("#plan-table .tabulator-tableholder").evaluate("(el) => el.scrollLeft = 1000")
     rod = row_cell(page, 1, "rod").bounding_box()
     assert dock["x"] <= rod["x"] and rod["x"] + rod["width"] <= dock["x"] + dock["width"]
+
+
+def test_the_fix_filter_is_two_checkboxes(page, live):
+    stage = page.locator("#panel-chain .stage", has_text="fix").first
+    assert stage.locator("label:has-text('fixed') input").is_checked()
+    floats = stage.locator("label:has-text('float') input")
+    assert not floats.is_checked()
+    try:
+        floats.check()
+        page.wait_for_timeout(500)
+        fix = next(s for s in live.state.chain.stages if s.kind == "fix_select")
+        assert sorted(fix.values) == [4, 5]
+        options = page.locator("#panel-chain select[aria-label='stage to add'] option").all_inner_texts()
+        assert "Speed limits" in options and "fix_select" not in options
+    finally:
+        with live.server.acting():
+            next(s for s in live.state.chain.stages if s.kind == "fix_select").values = (4,)
+            live.state.recompute()

@@ -22,6 +22,21 @@ const edit = (payload) => act("/api/chain/edit", payload, { busy: "Filtering…"
 function stageCard(stage, index, count) {
   const params = h("div", { class: "params grid2" });
   for (const p of stage.params) {
+    if (p.choices) {
+      // The fix filter: "fixed" and "float" as two boxes, not the text "[4]".
+      const kept = p.values.filter((v) => !p.choices.some((c) => c.value === v));
+      const boxes = p.choices.map((c) => h("input", {
+        id: `p-${index}-${p.key}-${c.label}`, type: "checkbox", checked: c.checked,
+        dataset: { value: c.value },
+      }));
+      const send = () => edit({ index, params: { [p.key]: [...kept,
+        ...boxes.filter((b) => b.checked).map((b) => Number(b.dataset.value))] } });
+      boxes.forEach((b) => b.addEventListener("change", send));
+      params.append(h("span", { class: "param-label" }, "keep"),
+        h("div", { class: "row" }, p.choices.map((c, i) =>
+          h("label", { for: boxes[i].id }, boxes[i], c.label))));
+      continue;
+    }
     params.append(h("label", { class: "param-label", for: `p-${index}-${p.key}` }, p.key));
     if (p.bool) {
       params.append(h("input", {
@@ -39,7 +54,7 @@ function stageCard(stage, index, count) {
   }
   return h("div", { class: "stage" + (stage.enabled ? "" : " off") },
     h("div", { class: "stage-head" },
-      h("label", { class: "stage-name" },
+      h("label", { class: "stage-name", title: stage.name },
         h("input", {
           type: "checkbox", checked: stage.enabled,
           onchange: (e) => edit({ index, enabled: e.target.checked }),
@@ -59,7 +74,7 @@ function render(chain) {
   chain.stages.forEach((stage, i) => body.append(stageCard(stage, i, chain.stages.length)));
   const picker = h("select", { class: "grow", "aria-label": "stage to add",
     onchange: (e) => { chosenKind = e.target.value; } },
-    chain.kinds.map((k) => h("option", { value: k, selected: k === chosenKind }, k)));
+    chain.kinds.map((k) => h("option", { value: k.kind, selected: k.kind === chosenKind }, k.name)));
   chosenKind = picker.value;
   body.append(
     h("div", { class: "row" }, picker,

@@ -16,6 +16,28 @@ from __future__ import annotations
 import ast
 
 from ..filters import REGISTRY, FilterChain, Stage
+from ..model.pointset import FIX_FLOAT, FIX_RTK
+
+# What each stage does, in words, for the Add list. A registered stage with
+# no entry here is offered under its internal name rather than not at all.
+PLAIN_NAMES = {
+    "fix_select": "Fix quality (fixed / float)",
+    "percentile_despike": "Remove height spikes (percentiles)",
+    "speed_threshold": "Speed limits",
+    "pdop_threshold": "PDOP limit",
+    "accuracy_threshold": "Reported accuracy limit",
+    "bin_to_cell": "Bin to cells",
+    "track_select": "Keep or drop tracks",
+    "session_select": "Keep or drop sessions",
+    "kind_select": "Keep or drop by type",
+    "time_window": "Time window",
+    "polygon_select": "Inside or outside a polygon",
+    "surface_residual": "Distance from a reference surface",
+}
+
+# The fix filter's values as the two choices anyone means by them, instead
+# of the text "[4]".
+FIX_CHOICES = (("fixed", FIX_RTK), ("float", FIX_FLOAT))
 
 
 def parse_param(text):
@@ -45,14 +67,26 @@ def stage_payload(stage: Stage, result) -> dict:
         counts = ("disabled" if not result.enabled else
                   f"{result.n_in:,} → {result.n_out:,}  "
                   f"({result.kept * 100:.1f}%)")
+    params = []
+    for key, value in stage.params().items():
+        entry = {"key": key, "bool": isinstance(value, bool),
+                 "value": value if isinstance(value, bool) else None,
+                 "text": "" if isinstance(value, bool) else param_text(value)}
+        if stage.kind == "fix_select" and key == "values":
+            # The page sends the whole list back; values other than fixed
+            # and float, if a chain ever held any, ride along untouched.
+            chosen = [int(v) for v in value]
+            entry["choices"] = [{"label": label, "value": code,
+                                 "checked": code in chosen}
+                                for label, code in FIX_CHOICES]
+            entry["values"] = chosen
+        params.append(entry)
     return {
         "kind": stage.kind,
         "label": stage.label,
+        "name": PLAIN_NAMES.get(stage.kind, stage.kind),
         "enabled": stage.enabled,
-        "params": [{"key": key, "bool": isinstance(value, bool),
-                    "value": value if isinstance(value, bool) else None,
-                    "text": "" if isinstance(value, bool) else param_text(value)}
-                   for key, value in stage.params().items()],
+        "params": params,
         "counts": counts,
     }
 
@@ -66,7 +100,9 @@ def chain_payload(chain: FilterChain) -> dict:
         head, tail = results[0].n_in, results[-1].n_out
         pct = tail / head * 100 if head else 0
         total = f"{head:,} → {tail:,} points  ({pct:.1f}% kept)"
-    return {"stages": stages, "total": total, "kinds": sorted(REGISTRY)}
+    kinds = [{"kind": k, "name": PLAIN_NAMES.get(k, k)} for k in REGISTRY]
+    return {"stages": stages, "total": total,
+            "kinds": sorted(kinds, key=lambda k: k["name"].lower())}
 
 
 # --- edits -------------------------------------------------------------------
@@ -111,5 +147,10 @@ def edit_stage(chain: FilterChain, index: int, *, enabled: bool | None = None,
     for key, value in (params or {}).items():
         if key not in known:
             raise KeyError(f"{stage.label} has no parameter '{key}'")
-        setattr(stage, key,
-                bool(value) if isinstance(known[key], bool) else parse_param(value))
+        if isinstance(value, list):              # the fix filter's checkboxes
+            value = tuple(int(v) for v in value)
+        elif isinstance(known[key], bool):
+            value = bool(value)
+        else:
+            value = parse_param(value)
+        setattr(stage, key, value)

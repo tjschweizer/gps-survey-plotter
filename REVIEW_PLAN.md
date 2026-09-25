@@ -117,6 +117,7 @@ These were set by the owner and apply to every item.
 | After C17 | 420 passed, 51 skipped, 49 deselected | 44 passed |
 | After C18 | 420 passed, 51 skipped, 51 deselected | 46 passed |
 | After C19 | 421 passed, 51 skipped, 52 deselected | 47 passed |
+| After C20 | 422 passed, 51 skipped, 53 deselected | 48 passed |
 
 Of the 55 skips, 50 need real data. The other 5 are network tests that the
 sandbox proxy refused.
@@ -198,8 +199,8 @@ These answers change the designs in section 5.
 | 26 | C16 | Consistent units in 2D, 3D and layers | UI | ✅ `4eec96e` |
 | 27 | C17 | Legend: ticks, marker key, no overlap | UI | ✅ `b336ab9` |
 | 28 | C18 | Contrast, colour tokens, type and spacing scale | UI | ✅ `0a653d7` |
-| 29 | C19 | Rod column second, in the table and the field sheet | UI | ✅ |
-| 30 | C20 | Readable filter stack | UI | todo |
+| 29 | C19 | Rod column second, in the table and the field sheet | UI | ✅ `9b905b7` |
+| 30 | C20 | Readable filter stack | UI | ✅ |
 | 31 | C21 | Grouped fetch errors and a short connect timeout | UI | todo |
 | 32 | C22 | File dialog: date column, sorting, keyboard | UI | todo |
 | 33 | C23 | Keyboard menus and labelled fields | UI | todo |
@@ -1118,7 +1119,16 @@ Evidence for these is in the review screenshots: synthetic export,
 - **Verify:** browser test.
 - **Breaking?:** the printed sheet layout changes.
 
-**C20 — Readable filter stack**
+**C20 — Readable filter stack** ✅
+- **Done:** `chain_edit.PLAIN_NAMES` names every registered stage;
+  `chain_payload["kinds"]` is now a list of `{kind, name}` sorted by name,
+  and the Add list shows the names (a stage's card has its name as a
+  tooltip). The fix stage's `values` param carries `choices` (fixed = 4,
+  float = 5) and the page draws two checkboxes, sending the whole list back
+  (other codes ride along); `edit_stage` stores a list as a tuple of ints.
+  The saved chain JSON is unchanged (`"values": [4, 5]`). Tests:
+  `test_web_api.py::test_the_filter_stack_reads_in_words`,
+  `test_web_browser.py::test_the_fix_filter_is_two_checkboxes`.
 - **What:** plain names in the Add list. The fix filter becomes two
   checkboxes, "fixed" and "float", instead of the text `[4]`. The saved chain
   JSON is unchanged. Files: `panels/chain.js`, `app/chain_edit.py`.

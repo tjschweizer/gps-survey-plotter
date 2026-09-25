@@ -839,3 +839,22 @@ def test_the_3d_grid_and_the_layers_are_in_feet(client, state):
 
     post(client, "/api/vertical/solve", {"mode": "local"})
     assert client.get("/api/surface/grid").json()["datum"] == "local datum"
+
+
+def test_the_filter_stack_reads_in_words(client, state):
+    """Plain names in the Add list; the fix filter as "fixed" and "float",
+    not the text "[4]" - with the saved chain unchanged."""
+    chain = client.get("/api/state").json()["chain"]
+    names = {k["kind"]: k["name"] for k in chain["kinds"]}
+    assert names["fix_select"] == "Fix quality (fixed / float)"
+    assert names["speed_threshold"] == "Speed limits"
+    fix = next(s for s in chain["stages"] if s["kind"] == "fix_select")
+    (values,) = [p for p in fix["params"] if p["key"] == "values"]
+    assert values["choices"] == [{"label": "fixed", "value": 4, "checked": True},
+                                 {"label": "float", "value": 5, "checked": False}]
+
+    index = [s["kind"] for s in chain["stages"]].index("fix_select")
+    post(client, "/api/chain/edit", {"index": index, "params": {"values": [4, 5]}})
+    saved = next(d for d in state.chain.to_list() if d["kind"] == "fix_select")
+    assert saved["values"] == [4, 5]
+    assert set(state.result.df["fix"].unique()) == {4, 5}
