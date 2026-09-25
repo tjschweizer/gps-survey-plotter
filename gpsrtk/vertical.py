@@ -749,9 +749,13 @@ class VerticalModel:
                 lines.append(f"    {k:26s} {v * 100:+8.2f} cm")
         if self.tie and self.tie.get("n"):
             t = self.tie
+            # The offset is antenna height plus the arbitrary datum - hundreds
+            # of metres here - so it is given in m and ft; "+23150.7 cm" read
+            # like a residual. Scatter and deviation are residuals, in cm.
             lines.append(
                 f"  tie to laser surface, {t['n']:,} walked points inside the "
-                f"shot hull: {t['offset_m'] * 100:+.1f} cm, scatter "
+                f"shot hull: {t['offset_m']:+.3f} m "
+                f"({m_to_ft(t['offset_m']):+.3f} ft), scatter "
                 f"{t['scatter_m'] * 100:.1f} cm, max deviation "
                 f"{t['max_dev_m'] * 100:.1f} cm")
             lines.append(

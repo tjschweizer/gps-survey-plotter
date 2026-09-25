@@ -540,3 +540,30 @@ def test_the_solve_notice_names_setups_to_look_at(state):
     model = V.solve_vertical(state.filtered, spots, mode="local")
     text = report.solve_notice(model)
     assert "Laser setups to look at" in text and "two-peg" in text
+
+
+# --- the solve report ------------------------------------------------------------------
+
+def test_the_solve_report_says_each_note_once(state):
+    from gpsrtk.app import report
+
+    model = state.solve_vertical("local")
+    assert model.notes, "the synthetic solve has a note to repeat"
+    text = report.solve_notice(model)
+    for note in model.notes:
+        assert text.count(note) == 1, note
+
+
+def test_the_tie_offset_is_in_metres_and_feet(state):
+    """It read "+23150.7 cm", like a residual; it is antenna height plus an
+    arbitrary datum, hundreds of metres."""
+    import re
+
+    model = state.solve_vertical("local")
+    line = next(ln for ln in model.describe().splitlines() if "tie to laser" in ln)
+    shot = re.search(r"shot hull: ([+-]\d+\.\d{3}) m \(([+-]\d+\.\d{3}) ft\)", line)
+    assert shot, line
+    metres, feet = float(shot.group(1)), float(shot.group(2))
+    assert metres == pytest.approx(model.tie["offset_m"], abs=5e-4)
+    assert feet == pytest.approx(metres / 0.3048, abs=5e-3)
+    assert "scatter" in line and " cm" in line

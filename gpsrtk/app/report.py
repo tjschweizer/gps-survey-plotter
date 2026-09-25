@@ -80,8 +80,12 @@ def solve_level(model) -> str:
 
 
 def solve_notice(model) -> str:
-    """The report shown after a solve, with anything worth acting on."""
-    warnings = list(model.notes)
+    """The report shown after a solve, with anything worth acting on.
+
+    The model's own notes are in `describe()` already; repeating them here
+    printed each one twice.
+    """
+    warnings = []
     if model.sessions and model.sessions.unresolved:
         warnings.append(
             "Sessions with no overlapping ground cannot be tied. Re-cover "

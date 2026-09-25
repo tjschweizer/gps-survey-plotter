@@ -122,6 +122,7 @@ These were set by the owner and apply to every item.
 | After C22 | 424 passed, 51 skipped, 54 deselected | 49 passed |
 | After C23 | 424 passed, 51 skipped, 55 deselected | 50 passed |
 | After A8 | 425 passed, 51 skipped, 56 deselected | 51 passed |
+| After C29 | 427 passed, 51 skipped, 56 deselected | 51 passed |
 
 Of the 55 skips, 50 need real data. The other 5 are network tests that the
 sandbox proxy refused.
@@ -208,8 +209,8 @@ These answers change the designs in section 5.
 | 31 | C21 | Grouped fetch errors and a short connect timeout | UI | ✅ `8cd2b66` |
 | 32 | C22 | File dialog: date column, sorting, keyboard | UI | ✅ `e361792` |
 | 33 | C23 | Keyboard menus and labelled fields | UI | ✅ `4cfb6fb` |
-| 34 | A8 | Start panel and recent files | UI | ✅ |
-| 35 | C29 | Solve report wording | UI | todo |
+| 34 | A8 | Start panel and recent files | UI | ✅ `9c90e3f` |
+| 35 | C29 | Solve report wording | UI | ✅ |
 | 36 | C10 | World file on the grid | processing | todo |
 | 37 | C24 | Surface smoothing sized in metres | processing | todo |
 | 38 | C26 | .gitignore covers exports | code health | todo |
@@ -1207,7 +1208,12 @@ Evidence for these is in the review screenshots: synthetic export,
 - **Verify:** browser test.
 - **Breaking?:** no.
 
-**C29 — Solve report wording**
+**C29 — Solve report wording** ✅
+- **Done:** `report.solve_notice` no longer starts its warnings from
+  `model.notes` (which `describe()` prints); `VerticalModel.describe` gives
+  the tie offset as "+231.507 m (+759.537 ft)", keeping scatter and max
+  deviation in cm. Tests: `test_vertical.py::test_the_solve_report_says_each_note_once`,
+  `::test_the_tie_offset_is_in_metres_and_feet`.
 - **What:** notes are printed once (`report.py:69` repeats `model.notes`,
   which `describe()` already prints). The tie offset is shown in m and ft,
   not "+23150.7 cm" (`vertical.py:488`).
