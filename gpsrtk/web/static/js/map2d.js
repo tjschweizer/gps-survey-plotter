@@ -16,7 +16,7 @@
 
 import { store, subscribe } from "./store.js";
 import { getBuffer, getJSON } from "./api.js";
-import { h, clear } from "./dom.js";
+import { h, clear, remember, recall } from "./dom.js";
 
 export const COLORMAPS = ["terrain", "gist_earth", "viridis", "cividis", "magma", "Spectral_r", "gray"];
 export const COLOR_BY = ["elevation", "fix quality", "speed", "session"];
@@ -112,16 +112,23 @@ map.addLayer(vectorLayer);
 
 // Points are one image re-rendered when the view settles, rather than tens of
 // thousands of live vector features redrawn on every frame of a pan.
+//
+// Over the surface they are drawn small and faint: some 50,000 full-size dots
+// hid the very surface they were gridded into. Alone they are drawn full.
+const POINT_RADIUS = { alone: 1.4, underSurface: 0.75 };
+const POINT_OPACITY_UNDER_SURFACE = 0.35;
+let pointRadius = POINT_RADIUS.alone;
 const pointSource = new ol.source.Vector();
 const pointStyles = new Map();
 function pointStyle(feature) {
-  const key = feature.get("c");
+  const key = `${feature.get("c")}|${pointRadius}`;
   let style = pointStyles.get(key);
   if (!style) {
-    const r = (key >>> 24) & 255, g = (key >>> 16) & 255, b = (key >>> 8) & 255, a = key & 255;
+    const c = feature.get("c");
+    const r = (c >>> 24) & 255, g = (c >>> 16) & 255, b = (c >>> 8) & 255, a = c & 255;
     style = new ol.style.Style({
       image: new ol.style.Circle({
-        radius: 1.4,
+        radius: pointRadius,
         fill: new ol.style.Fill({ color: `rgba(${r},${g},${b},${(a / 255).toFixed(3)})` }),
       }),
     });
@@ -264,6 +271,13 @@ async function syncPoints(state) {
   // Hiding a session redraws the points even when the surface is unchanged.
   const key = `${state.rev.result}|${state.rev.site}|${state.rev.sessions}|${colorBy}|${cmap}`;
   pointLayer.setVisible(controls.points.checked);
+  const underSurface = controls.surface.checked && !!state.surface;
+  const radius = underSurface ? POINT_RADIUS.underSurface : POINT_RADIUS.alone;
+  pointLayer.setOpacity(underSurface ? POINT_OPACITY_UNDER_SURFACE : 1);
+  if (radius !== pointRadius) {
+    pointRadius = radius;
+    pointLayer.changed();
+  }
   if (key === pointsKey) return;
   pointsKey = key;
   const token = ++pointsToken;
@@ -425,6 +439,18 @@ subscribe((state, prev) => {
     homeKey = home;
     if (state.home) setTimeout(resetView, 0);
   }
+});
+
+// Slope mode stacks colour, arrows and squares; the points on top of all
+// that are noise, so they are off there unless asked for. The choice is
+// remembered per shade mode. (Registered before the redraw below.)
+const pointsDefault = (mode) => mode !== "slope";
+controls.mode.addEventListener("change", () => {
+  const mode = controls.mode.value;
+  controls.points.checked = recall(`points-${mode}`, pointsDefault(mode));
+});
+controls.points.addEventListener("change", () => {
+  remember(`points-${controls.mode.value}`, controls.points.checked);
 });
 
 for (const el of Object.values(controls)) {

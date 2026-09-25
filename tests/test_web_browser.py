@@ -617,3 +617,25 @@ def test_the_status_strip_sits_above_the_map(page, live):
     assert box["y"] + box["height"] <= map_box["y"] + 1
     # With no basemap there is nothing to align: the group stays folded.
     assert page.locator("#panel-basemaps details.alignment").get_attribute("open") is None
+
+
+def test_points_give_way_to_the_surface(page):
+    """Over the surface the points are small and faint; in slope mode they
+    are off unless asked for, and that choice is remembered."""
+    layer_opacity = """() => window.yardsurvey.map.getLayers().getArray()
+        .find((l) => l.getZIndex() === 120).getOpacity()"""
+    assert page.evaluate(layer_opacity) == 0.35
+    page.uncheck("#show-surface")
+    page.wait_for_timeout(200)
+    assert page.evaluate(layer_opacity) == 1
+    page.check("#show-surface")
+
+    page.select_option("#surface-mode", "slope")
+    assert not page.is_checked("#show-points")
+    page.check("#show-points")                   # asked for, in slope mode
+    page.select_option("#surface-mode", "elevation")
+    assert page.is_checked("#show-points")
+    page.select_option("#surface-mode", "slope")
+    assert page.is_checked("#show-points"), "the choice is remembered"
+    page.uncheck("#show-points")                 # leave the default for others
+    page.select_option("#surface-mode", "elevation")

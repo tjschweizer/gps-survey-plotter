@@ -111,6 +111,7 @@ These were set by the owner and apply to every item.
 | After A1 | 414 passed, 51 skipped, 42 deselected | 37 passed |
 | After A7 | 416 passed, 51 skipped, 43 deselected | 38 passed |
 | After C13 | 418 passed, 51 skipped, 44 deselected | 39 passed |
+| After C14 | 418 passed, 51 skipped, 45 deselected | 40 passed (twice) |
 
 Of the 55 skips, 50 need real data. The other 5 are network tests that the
 sandbox proxy refused.
@@ -186,8 +187,8 @@ These answers change the designs in section 5.
 | 20 | A5 | Tie transects | workflow | ✅ `062fd1f` |
 | 21 | A1 | Laser terrain shots in the surface (and the Revit file) | processing | ✅ `e1bb548` |
 | 22 | A7 | Spot IDs on the map and in the datum dialog | UI | ✅ `50c887e` |
-| 23 | C13 | Status strip above the map | UI | ✅ |
-| 24 | C14 | Points drawn under the surface's weight | UI | todo |
+| 23 | C13 | Status strip above the map | UI | ✅ `57efec7`, fix `1a623b9` |
+| 24 | C14 | Points drawn under the surface's weight | UI | ✅ |
 | 25 | C15 | Success reports stop being modal | UI | todo |
 | 26 | C16 | Consistent units in 2D, 3D and layers | UI | todo |
 | 27 | C17 | Legend: ticks, marker key, no overlap | UI | todo |
@@ -968,7 +969,10 @@ Evidence for these is in the review screenshots: synthetic export,
   between the terrain toolbar and the map (`#view-plan` gained a grid row),
   rendered by `main.js`. The basemap Alignment group is a `<details>`
   folded until the first basemap arrives (opened then, folded again if they
-  are cleared). Tests: `test_web_api.py::test_the_status_strip_says_what_the_heights_are`,
+  are cleared). The strip is always one line high (clipped, never wrapped
+  or hidden): a first version that hid itself when empty and wrapped made
+  two map-interaction browser tests flaky, because each change of its
+  height resized the map a beat before OpenLayers knew. Tests: `test_web_api.py::test_the_status_strip_says_what_the_heights_are`,
   `::test_the_strip_says_when_session_offsets_are_unsolved`,
   `test_web_browser.py::test_the_status_strip_sits_above_the_map`.
 - **What:** one line above the map showing the datum (tied, local,
@@ -981,7 +985,13 @@ Evidence for these is in the review screenshots: synthetic export,
 - **Verify:** browser test.
 - **Breaking?:** no.
 
-**C14 — Points drawn under the surface's weight**
+**C14 — Points drawn under the surface's weight** ✅
+- **Done:** `map2d.js`: with the surface shown, points draw at radius 0.75
+  (1.5 px) on a layer at 35% opacity; alone, radius 1.4 and full opacity
+  (the style cache is keyed by radius too). Switching the shade to slope
+  turns points off unless the user turned them on there before: the choice
+  is remembered per shade mode in localStorage (`points-<mode>`). Test:
+  `test_web_browser.py::test_points_give_way_to_the_surface`.
 - **What:** with the surface on, points draw at about 1.5 px and 35% opacity.
   In slope mode they are off by default, and the choice is remembered.
   File: `map2d.js`.
