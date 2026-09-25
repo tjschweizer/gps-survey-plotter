@@ -33,6 +33,21 @@ geometry in it: a rotary laser sweeps a horizontal plane, so the height of that
 plane is one unknown wherever the tripod stands. Setup positions are recorded
 here for planning only - line of sight, and range, since an imperfectly levelled
 laser accumulates error with distance.
+
+Outlines
+--------
+A building, a shed, a planting bed, a fence, the lot, the street: each is
+drawn as an OUTLINE, a closed line whose corners are numbered shots like any
+other. That is the whole point of drawing one - the corners go on the field
+sheet to be located, by RTK where the sky allows and by tape where it does
+not, and once they are the outline stands where they were measured rather
+than where they were clicked.
+
+An outline can be KEEP-OUT: the ground inside it is not lawn, so it is left
+out of the terrain surface, its exports and the Revit points, and tie
+transects are not run across it. The distance mask catches the middle of a
+house footprint; only an outline catches the metre and a half inside its
+walls, and ground that really was driven over but is not terrain.
 """
 
 from __future__ import annotations
@@ -48,7 +63,10 @@ from .fileio import write_text_atomic
 from .units import M_PER_FT, M_PER_IN, ft_to_m, m_to_ft
 
 SUFFIX = ".yardplan"
-VERSION = 1
+# 2: lines gained `keep_out`, for outlines. A version 1 build refuses a
+# version 2 plan with its "newer" message rather than dropping the flag, and
+# with it the keep-out areas.
+VERSION = 2
 
 # How each position method is expected to perform horizontally. These are not
 # measured - they are honest order-of-magnitude priors, used to weight points
@@ -70,8 +88,9 @@ PURPOSE_GROUPS: dict[str, tuple[str, ...]] = {
                 "top of slope", "toe of slope", "drainage outlet"),
     "feature": ("building corner", "foundation", "driveway edge",
                 "sidewalk edge", "curb flowline", "wall", "step",
-                "fence", "tree", "utility"),
-    "control": ("plat reference", "monument", "benchmark", "check"),
+                "fence", "tree", "utility", "bed edge", "outline vertex"),
+    "control": ("plat reference", "monument", "benchmark", "check",
+                "property corner"),
     # Not shots at all: marks to walk or mow along, so the next outing
     # shares ground with the last. Never read with the rod.
     "guide": ("tie transect",),
@@ -85,6 +104,22 @@ CONTROL_PURPOSES = frozenset(PURPOSE_GROUPS["control"])
 GUIDE_PURPOSES = frozenset(PURPOSE_GROUPS["guide"])
 
 DEFAULT_LINE_PURPOSE = "breakline"
+
+# What an outline can be: what its corners are shot as, and whether the
+# ground inside it is kept out of the terrain surface unless you say
+# otherwise. A driveway is left in by default - it is measured ground, and
+# its crown decides where water goes - and a fence or property line is a
+# line on the ground, not an area of it.
+OUTLINE_KINDS: dict[str, tuple[str, bool]] = {
+    "building": ("building corner", True),
+    "shed": ("building corner", True),
+    "landscaping": ("bed edge", True),
+    "driveway": ("driveway edge", False),
+    "street": ("curb flowline", True),
+    "fence": ("fence", False),
+    "property line": ("property corner", False),
+    "other": ("outline vertex", True),
+}
 
 # A SW Maps record named after a plan shot fills it, but never overwrites it.
 # Beyond these it disagrees, and the disagreement is reported instead.
@@ -107,6 +142,11 @@ def is_terrain(purpose: str) -> bool:
 def is_guide(purpose: str) -> bool:
     """Whether a point only guides the next outing (a tie transect vertex)."""
     return purpose in GUIDE_PURPOSES
+
+
+def outline_slug(kind: str) -> str:
+    """The stem an outline of this kind is named with: "property-line"."""
+    return kind.replace(" ", "-")
 
 
 @dataclass
@@ -142,10 +182,17 @@ class PlanLine:
     """
 
     line_id: str
-    kind: str = "breakline"       # breakline | transect | boundary
+    # breakline | transect | boundary, or an outline: a key of OUTLINE_KINDS
+    kind: str = "breakline"
     numbers: list[int] = field(default_factory=list)
     note: str = ""
     closed: bool = False
+    # An outline whose inside is not terrain. Only a closed one has an inside.
+    keep_out: bool = False
+
+    @property
+    def is_outline(self) -> bool:
+        return self.kind in OUTLINE_KINDS
 
 
 @dataclass
@@ -260,6 +307,24 @@ class Plan:
             p = self.add_point(e, n, purpose=purpose)
             ln.numbers.append(p.number)
         self.lines.append(ln)
+        return ln
+
+    def add_outline(self, line_id: str, vertices, kind: str = "building", *,
+                    keep_out: bool | None = None, note: str = "") -> PlanLine:
+        """A closed outline, its corners numbered as shots of the kind's purpose.
+
+        Keep-out follows the kind unless it is given.
+        """
+        if kind not in OUTLINE_KINDS:
+            raise ValueError(f"outline kind must be one of {tuple(OUTLINE_KINDS)}, "
+                             f"got {kind!r}")
+        vertices = list(vertices)
+        if len(vertices) < 3:
+            raise ValueError("an outline needs at least three corners")
+        purpose, default = OUTLINE_KINDS[kind]
+        ln = self.add_line(line_id, vertices, kind=kind, note=note, closed=True,
+                           purpose=purpose)
+        ln.keep_out = default if keep_out is None else bool(keep_out)
         return ln
 
     def set_purpose(self, number: int, purpose: str) -> None:
@@ -400,6 +465,38 @@ class Plan:
         pos = a + along * point.station_m + left * point.offset_m
         return float(pos[0]), float(pos[1])
 
+    # --- outlines ----------------------------------------------------------
+
+    def drawn_position(self, number: int) -> tuple[float, float]:
+        """Where a point is drawn: its best position, or its planned mark when
+        a derived one cannot be solved (a tape tie to a deleted point)."""
+        try:
+            e, n, _, _ = self.resolve(number)
+        except (KeyError, ValueError):
+            p = self.by_number(number)
+            e, n = p.planned_e, p.planned_n
+        return e, n
+
+    def outline_vertices(self, line: PlanLine) -> list[tuple[float, float]]:
+        """An outline's corners in order, where they are best known.
+
+        A measured corner moves the outline with it: the click was a guess at
+        where the corner is, and the shot is where it is.
+        """
+        return [self.drawn_position(num) for num in line.numbers
+                if self.by_number(num) is not None]
+
+    def keep_out_areas(self) -> list[tuple[str, np.ndarray]]:
+        """Every keep-out outline that has an inside, as (id, (k, 2) e/n)."""
+        out = []
+        for ln in self.lines:
+            if not (ln.is_outline and ln.keep_out and ln.closed):
+                continue
+            xy = self.outline_vertices(ln)
+            if len(xy) >= 3:
+                out.append((ln.line_id, np.asarray(xy, dtype=float)))
+        return out
+
     # --- filling from the field app ----------------------------------------
 
     def fill_from_records(self, records) -> FillReport:
@@ -502,8 +599,11 @@ class Plan:
     # --- persistence -----------------------------------------------------
 
     def to_dict(self) -> dict:
+        # Always the CURRENT format, whatever version was read in: a version 1
+        # plan given a keep-out outline and saved would otherwise claim a
+        # format that drops it.
         return {
-            "version": self.version, "name": self.name, "epsg": self.epsg,
+            "version": VERSION, "name": self.name, "epsg": self.epsg,
             "points": [asdict(p) for p in self.points],
             "lines": [asdict(ln) for ln in self.lines],
             "setups": [asdict(s) for s in self.setups],

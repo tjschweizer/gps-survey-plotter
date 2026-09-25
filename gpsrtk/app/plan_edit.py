@@ -18,25 +18,36 @@ marker would appear not to move.
 Edits that fail raise `PlanEditError` with a message meant for the user. Edits
 that are allowed but probably a mistake raise `NeedsConfirmation`; calling
 again with `confirm=True` goes ahead.
+
+An outline is edited in the same two places: its corners are markers and
+rows like any other shot, and what the outline itself is - its name, its
+kind, whether it is keep-out - is edited in the list of outlines.
 """
 
 from __future__ import annotations
 
 import math
+import re
 
-from ..plan import (PURPOSES, SIGMA_M, Plan, PlanLine, PlannedPoint,
-                    PlannedSetup, Tie, is_guide, purpose_group)
-from ..units import ft_to_m, m_to_ft, parse_rod
+from ..plan import (OUTLINE_KINDS, PURPOSES, SIGMA_M, Plan, PlanLine,
+                    PlannedPoint, PlannedSetup, Tie, is_guide, is_terrain,
+                    outline_slug, purpose_group)
+from ..units import M_PER_FT, ft_to_m, m_to_ft, parse_rod
 
-NAVIGATE, ADD_POINT, ADD_LINE, ADD_SETUP = ("navigate", "add_point",
-                                            "add_line", "add_setup")
-MODES = (NAVIGATE, ADD_POINT, ADD_LINE, ADD_SETUP)
+NAVIGATE, ADD_POINT, ADD_LINE, ADD_OUTLINE, ADD_SETUP = (
+    "navigate", "add_point", "add_line", "add_outline", "add_setup")
+MODES = (NAVIGATE, ADD_POINT, ADD_LINE, ADD_OUTLINE, ADD_SETUP)
 MODE_HINTS = {
     ADD_POINT: "Click on the map to place a shot.",
     ADD_LINE: "Click each vertex; double-click to finish the line.",
+    ADD_OUTLINE: "Click each corner; double-click the last one to close the "
+                 "outline.",
     ADD_SETUP: "Click where the laser will stand.",
     NAVIGATE: "Drag a numbered marker to move it.",
 }
+
+# Longest outline name: it has to fit the Line column and the field sheet.
+MAX_NAME = 40
 
 METHODS = ["planned", "rtk", "taped", "station_offset"]
 
@@ -134,8 +145,11 @@ def line_of(plan: Plan, number: int) -> str:
     return next((ln.line_id for ln in plan.lines if number in ln.numbers), "")
 
 
-def detail_text(plan: Plan, site, number: int) -> str:
-    """The one-line description above the position editor."""
+def detail_text(plan: Plan, site, number: int, kept_out_by: str = "") -> str:
+    """The one-line description above the position editor.
+
+    `kept_out_by` names the keep-out outline a terrain shot stands inside.
+    """
     point = _point(plan, number)
     e, n, method, sigma, problem = best_position(plan, number)
     le, ln = site.to_local(e, n)
@@ -145,7 +159,35 @@ def detail_text(plan: Plan, site, number: int) -> str:
             f"({m_to_ft(le):.1f}, {m_to_ft(ln):.1f} ft from origin)")
     if problem:
         text += f". Could not use its {point.method} position: {problem}"
+    if kept_out_by:
+        text += (f". It is inside keep-out outline {kept_out_by}, so it is "
+                 "left out of the surface")
     return text
+
+
+def kept_out_terrain(plan: Plan) -> dict[int, str]:
+    """Terrain shots standing inside a keep-out outline: number -> outline.
+
+    A spot placed inside the house is almost always a misclick, and one
+    inside a bed is not on the lawn the surface describes. Either way it is
+    left out, and the point says so rather than silently not counting.
+    """
+    import numpy as np
+
+    from ..surface import inside_polygons
+
+    areas = plan.keep_out_areas()
+    shots = [p for p in plan.points if is_terrain(p.purpose)]
+    if not areas or not shots:
+        return {}
+    xy = np.array([plan.drawn_position(p.number) for p in shots], dtype=float)
+    out: dict[int, str] = {}
+    for name, poly in areas:
+        inside = inside_polygons([poly], xy[:, 0], xy[:, 1])
+        for p, hit in zip(shots, inside):
+            if hit:
+                out.setdefault(p.number, name)
+    return out
 
 
 def selection_hint(count: int) -> str:
@@ -419,25 +461,197 @@ def insert_vertex(plan: Plan, number: int) -> PlannedPoint:
     """Add a vertex after this one, halfway to the next.
 
     New numbers always go on the end, but the vertex belongs in the middle of
-    the RUN - the sheet is ordered by number, the line by shape.
+    the RUN - the sheet is ordered by number, the line by shape. An
+    outline's last corner is followed by its first, and a new corner is shot
+    as the outline's corners are.
     """
     _point(plan, number)
     line = next((ln for ln in plan.lines if number in ln.numbers), None)
     if line is None:
         raise PlanEditError(
             "Insert vertex",
-            "Select a break line vertex. Loose shots are not part of a line.")
+            "Select a break line vertex or an outline corner. Loose shots "
+            "are not part of a line.")
     index = line.numbers.index(number)
-    if index + 1 >= len(line.numbers):
+    if index + 1 >= len(line.numbers) and not line.closed:
         raise PlanEditError(
             "Insert vertex",
             "That is the last vertex; there is nothing to insert before.")
     a = plan.by_number(line.numbers[index])
-    b = plan.by_number(line.numbers[index + 1])
+    b = plan.by_number(line.numbers[(index + 1) % len(line.numbers)])
+    purpose = OUTLINE_KINDS[line.kind][0] if line.is_outline else "breakline"
     new = plan.add_point((a.planned_e + b.planned_e) / 2,
-                         (a.planned_n + b.planned_n) / 2, purpose="breakline")
+                         (a.planned_n + b.planned_n) / 2, purpose=purpose)
     line.numbers.insert(index + 1, new.number)
     return new
+
+
+# --- outlines ----------------------------------------------------------------------
+
+def _outline(plan: Plan, line_id: str) -> PlanLine:
+    line = plan.line(str(line_id))
+    if line is None or not line.is_outline:
+        raise PlanEditError("Outline", f"There is no outline named {line_id}.")
+    return line
+
+
+def _outline_name(plan: Plan, kind: str) -> str:
+    """The first free "building-1", "property-line-2" for this kind."""
+    stem = outline_slug(kind)
+    index = 1
+    while plan.line(f"{stem}-{index}") is not None:
+        index += 1
+    return f"{stem}-{index}"
+
+
+def add_outline(plan: Plan, vertices, kind: str = "building") -> PlanLine | None:
+    """An outline from clicked corners. Fewer than three is not an area.
+
+    The map closes a drawn polygon by repeating its first corner; that
+    repeat is not a corner of its own.
+    """
+    if kind not in OUTLINE_KINDS:
+        raise PlanEditError("Outline", f"'{kind}' is not a kind of outline.")
+    vertices = [(float(e), float(n)) for e, n in vertices]
+    if len(vertices) > 1 and vertices[0] == vertices[-1]:
+        vertices = vertices[:-1]
+    if len(vertices) < 3:
+        return None
+    return plan.add_outline(_outline_name(plan, kind), vertices, kind)
+
+
+def rename_outline(plan: Plan, line_id: str, name) -> str:
+    """Give an outline a name of your own: "house", "garden shed".
+
+    Anything positioned along the outline by station and offset follows it.
+    """
+    line = _outline(plan, line_id)
+    name = " ".join(str(name or "").split())
+    if not name:
+        raise PlanEditError("Outline", "An outline needs a name.")
+    if len(name) > MAX_NAME:
+        raise PlanEditError("Outline",
+                            f"Keep the name to {MAX_NAME} characters or fewer.")
+    if name == line.line_id:
+        return name
+    if plan.line(name) is not None:
+        raise PlanEditError("Outline",
+                            f"There is already a line or outline named {name}.")
+    for p in plan.points:
+        if p.ref_line == line.line_id:
+            p.ref_line = name
+    line.line_id = name
+    return name
+
+
+def set_outline_kind(plan: Plan, line_id: str, kind: str) -> str:
+    """Say what an outline is. Returns its name, which may have changed.
+
+    Corners still shot as the old kind's corners become the new kind's; a
+    corner given a purpose of its own keeps it. Keep-out takes the new
+    kind's default, and a name the outline was given automatically
+    ("building-1") follows the kind.
+    """
+    line = _outline(plan, line_id)
+    if kind not in OUTLINE_KINDS:
+        raise PlanEditError("Outline", f"'{kind}' is not a kind of outline.")
+    if kind == line.kind:
+        return line.line_id
+    old_purpose = OUTLINE_KINDS[line.kind][0]
+    purpose, keep_out = OUTLINE_KINDS[kind]
+    for number in line.numbers:
+        p = plan.by_number(number)
+        if p is not None and p.purpose == old_purpose:
+            p.purpose = purpose
+    automatic = re.fullmatch(rf"{re.escape(outline_slug(line.kind))}-\d+",
+                             line.line_id)
+    line.kind = kind
+    line.keep_out = keep_out and line.closed
+    if automatic:
+        rename_outline(plan, line.line_id, _outline_name(plan, kind))
+    return line.line_id
+
+
+def set_outline_keep_out(plan: Plan, line_id: str, keep_out: bool) -> None:
+    line = _outline(plan, line_id)
+    if keep_out and not line.closed:
+        raise PlanEditError(
+            "Keep-out",
+            f"{line.line_id} is open, so it has no inside to keep out. Close "
+            "it first.")
+    line.keep_out = bool(keep_out)
+
+
+def set_outline_closed(plan: Plan, line_id: str, closed: bool) -> None:
+    """Close an outline, or open it into a run - a fence along one side.
+
+    An open outline has no inside, so opening one also ends keep-out.
+    """
+    line = _outline(plan, line_id)
+    line.closed = bool(closed)
+    if not line.closed:
+        line.keep_out = False
+
+
+def delete_outline(plan: Plan, line_id: str, *, confirm: bool = False) -> list[int]:
+    """Remove an outline and its corners. Always confirmed: it is several
+    points at once, and any of them may carry a reading or a measurement."""
+    line = _outline(plan, line_id)
+    numbers = [n for n in line.numbers if plan.by_number(n) is not None]
+    if not confirm:
+        measured = [n for n in numbers if plan.by_number(n).has_reading
+                    or is_locked(plan, n)]
+        raise NeedsConfirmation(
+            "Delete outline",
+            f"Delete {line.line_id} and its {len(numbers)} corners ("
+            + ", ".join(f"#{n}" for n in numbers[:8])
+            + (", ..." if len(numbers) > 8 else "") + ")?"
+            + (f"\n\n{len(measured)} of them carry a reading or a measured "
+               "position, which go too." if measured else "")
+            + "\n\nNumbers are never reused, so the other shots keep the "
+              "numbers on your field sheet.")
+    for number in numbers:
+        plan.remove_point(number)
+    plan.lines.remove(line)
+    return numbers
+
+
+def outline_summary(plan: Plan, line: PlanLine) -> str:
+    """What an outline measures, from its corners where they are best known.
+
+    A four-cornered building or shed also gives its diagonals, which a
+    rectangle has equal: the check that found the soffit corners 1.1 ft out.
+    Only once all four are located does the difference mean anything about
+    the building rather than about the clicks.
+    """
+    import numpy as np
+
+    numbers = [n for n in line.numbers if plan.by_number(n) is not None]
+    located = sum(1 for n in numbers if is_locked(plan, n))
+    word = "corner" if line.closed else "vertex"
+    plural = "corners" if line.closed else "vertices"
+    text = (f"{len(numbers)} {word if len(numbers) == 1 else plural}, "
+            f"{located} located")
+    xy = np.array(plan.outline_vertices(line), dtype=float)
+    if len(xy) < (3 if line.closed else 2):
+        return text + (" - needs at least three corners" if line.closed
+                       else "")
+    ring = np.vstack([xy, xy[:1]]) if line.closed else xy
+    length = float(np.hypot(*np.diff(ring, axis=0).T).sum())
+    if line.closed:
+        x, y = xy[:, 0], xy[:, 1]
+        area = 0.5 * abs(float(np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1))))
+        text += (f" · {area / M_PER_FT ** 2:,.0f} sq ft"
+                 f" · perimeter {m_to_ft(length):,.1f} ft")
+    else:
+        text += f" · length {m_to_ft(length):,.1f} ft"
+    if line.closed and line.kind in ("building", "shed") and len(xy) == 4:
+        d1 = m_to_ft(float(np.hypot(*(xy[2] - xy[0]))))
+        d2 = m_to_ft(float(np.hypot(*(xy[3] - xy[1]))))
+        text += (f" · diagonals {d1:.2f} / {d2:.2f} ft "
+                 f"({abs(d1 - d2):.2f} ft apart"
+                 + ("" if located == 4 else ", from clicks") + ")")
+    return text
 
 
 # --- tie transects -----------------------------------------------------------------
@@ -449,7 +663,7 @@ TIE_MIN_LENGTH_M = 5.0
 TIE_PER_AXIS = 2
 
 
-def tie_transect_runs(e, n, sessions=None) -> list[dict]:
+def tie_transect_runs(e, n, sessions=None, keep_out=()) -> list[dict]:
     """Up to two east-west and two north-south runs over well-covered ground.
 
     Each candidate is a row (or column) of 0.5 m cells, clipped to its
@@ -459,12 +673,20 @@ def tie_transect_runs(e, n, sessions=None) -> list[dict]:
     at least a third of the lot apart (5 m at least), so they cross the lot
     rather than bunching on one well-mown strip. Positions are cell centres,
     anchored at 0,0 like the site origin.
+
+    `keep_out` polygons are ground a run must not use or cross: points inside
+    them do not count as cover, and a gap is not jumped where it runs
+    through one - a 1.5 m bed is narrower than the gap allowed.
     """
     import numpy as np
     import pandas as pd
 
+    from ..surface import inside_polygons
+
     e, n = np.asarray(e, dtype=float), np.asarray(n, dtype=float)
     ok = np.isfinite(e) & np.isfinite(n)
+    if keep_out:
+        ok &= ~inside_polygons(keep_out, e, n)
     if not ok.any():
         return []
     frame = pd.DataFrame({
@@ -482,7 +704,12 @@ def tie_transect_runs(e, n, sessions=None) -> list[dict]:
             part = part.sort_values(along)
             pos = part[along].to_numpy()
             weight = part["s"].to_numpy()
-            breaks = np.flatnonzero(np.diff(pos) - 1 > gap_cells) + 1
+            step = np.diff(pos) - 1
+            breaks = np.flatnonzero(step > gap_cells) + 1
+            if keep_out:
+                crossing = [i + 1 for i in np.flatnonzero((step > 0) & (step <= gap_cells))
+                            if _gap_is_kept_out(keep_out, axis, row, pos[i], pos[i + 1])]
+                breaks = np.union1d(breaks, crossing).astype(int)
             for idx in np.split(np.arange(len(pos)), breaks):
                 length = (pos[idx[-1]] - pos[idx[0]] + 1) * TIE_CELL_M
                 if length >= TIE_MIN_LENGTH_M:
@@ -507,14 +734,28 @@ def tie_transect_runs(e, n, sessions=None) -> list[dict]:
     return runs
 
 
+def _gap_is_kept_out(keep_out, axis: str, row: int, first: int, last: int) -> bool:
+    """Whether any cell between two covered cells of a row is kept out."""
+    import numpy as np
+
+    from ..surface import inside_polygons
+
+    along = (np.arange(first + 1, last) + 0.5) * TIE_CELL_M
+    across = np.full(len(along), (row + 0.5) * TIE_CELL_M)
+    x, y = (along, across) if axis == "E-W" else (across, along)
+    return bool(inside_polygons(keep_out, x, y).any())
+
+
 def add_tie_transects(plan: Plan, e, n, sessions=None) -> str:
     """Replace the plan's tie transects with new ones. Returns what happened.
 
     Overlap between outings is luck unless it is planned, and an outing
     without it cannot be recovered. Walking or mowing these lines first
-    makes the next outing share ground with the ones already loaded.
+    makes the next outing share ground with the ones already loaded. They
+    keep off the plan's keep-out outlines.
     """
-    runs = tie_transect_runs(e, n, sessions)
+    runs = tie_transect_runs(e, n, sessions,
+                             keep_out=[xy for _, xy in plan.keep_out_areas()])
     if not runs:
         raise PlanEditError(
             "Tie transects",
@@ -548,6 +789,7 @@ def add_tie_transects(plan: Plan, e, n, sessions=None) -> str:
 def plan_payload(plan: Plan, site) -> dict:
     """Everything the table and the map need, in local metres."""
     points, leaders = [], []
+    kept_out = kept_out_terrain(plan)
     for p in sorted(plan.points, key=lambda q: q.number):
         e, n, method, sigma, problem = best_position(plan, p.number)
         x, y = site.to_local(e, n)
@@ -579,7 +821,8 @@ def plan_payload(plan: Plan, site) -> dict:
             "tooltip": (f"#{p.number} {p.purpose} — {method}"
                         + ("; position measured, drag disabled" if locked
                            else "; planned position, drag to move")),
-            "detail": detail_text(plan, site, p.number),
+            "detail": detail_text(plan, site, p.number, kept_out.get(p.number, "")),
+            "kept_out": p.number in kept_out,
             "observed": observed,
             "ties": [{"ref": t.ref_number, "ft": t.distance_ft}
                      for t in p.ties],
@@ -589,13 +832,20 @@ def plan_payload(plan: Plan, site) -> dict:
         })
 
     drawn = {pt["number"]: (pt["x"], pt["y"]) for pt in points}
-    lines = []
+    lines, outlines = [], []
     for ln in plan.lines:
         xy = [list(drawn[num]) for num in ln.numbers if num in drawn]
         if ln.closed and len(xy) > 2:
             xy.append(xy[0])
         lines.append({"line_id": ln.line_id, "numbers": list(ln.numbers),
-                      "closed": ln.closed, "xy": xy, "kind": ln.kind})
+                      "closed": ln.closed, "xy": xy, "kind": ln.kind,
+                      "outline": ln.is_outline,
+                      "keep_out": ln.is_outline and ln.keep_out and ln.closed})
+        if ln.is_outline:
+            outlines.append({"line_id": ln.line_id, "kind": ln.kind,
+                             "keep_out": ln.keep_out, "closed": ln.closed,
+                             "numbers": list(ln.numbers),
+                             "summary": outline_summary(plan, ln)})
 
     setups = []
     for s in plan.setups:
@@ -607,6 +857,9 @@ def plan_payload(plan: Plan, site) -> dict:
     return {
         "points": points,
         "lines": lines,
+        "outlines": outlines,
+        "outline_kinds": [{"kind": k, "keep_out": keep}
+                          for k, (_, keep) in OUTLINE_KINDS.items()],
         "setups": setups,
         "leaders": leaders,
         "coverage": coverage_text(plan),

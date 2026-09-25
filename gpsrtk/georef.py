@@ -45,10 +45,12 @@ from .units import m_to_ft
 # Purposes whose planned mark is plausibly a click on something visible in an
 # aerial photo. Terrain spots are excluded on purpose: open lawn has no
 # identifiable feature to click, so the planned position carries no information
-# about where the imagery puts the ground.
+# about where the imagery puts the ground. Nor is a property corner: a pin
+# cannot be seen from the air, and a corner clicked on the cartographic
+# parcel lines says nothing about the photo.
 PHOTO_IDENTIFIABLE = frozenset({
     "building corner", "foundation", "driveway edge", "sidewalk edge",
-    "curb flowline", "wall", "step", "fence", "utility",
+    "curb flowline", "wall", "step", "fence", "utility", "bed edge",
     "monument", "plat reference",
 })
 

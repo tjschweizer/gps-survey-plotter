@@ -40,6 +40,36 @@ GROUP_STYLE = {
     "guide": ("#783ca0", "circle"),
 }
 
+# Outlines as the plan view draws them: a property line in control green and
+# dashed like a boundary, a fence dotted, the rest a built feature's solid
+# blue; keep-out hatched.
+OUTLINE_DASH = {"property line": "12 4 2 4", "fence": "2 4"}
+HATCH_DEF = ('<defs><pattern id="keep-out" width="8" height="8" '
+             'patternUnits="userSpaceOnUse" patternTransform="rotate(45)">'
+             '<rect width="8" height="8" fill="#3c3c3c" fill-opacity="0.12"/>'
+             '<line x1="0" y1="0" x2="0" y2="8" stroke="#282828" '
+             'stroke-opacity="0.6" stroke-width="1.5"/></pattern></defs>')
+
+
+def _outline(line, pts: list[str]) -> list[str]:
+    """An outline's shape and its name, over the white casing."""
+    area = line.closed and len(pts) >= 3
+    keep_out = area and line.keep_out
+    colour = "#2b7a3d" if line.kind == "property line" else "#1f5fa8"
+    dash = OUTLINE_DASH.get(line.kind)
+    tag = "polygon" if area else "polyline"
+    parts = [f'<{tag} points="{" ".join(pts)}" '
+             f'fill="{"url(#keep-out)" if keep_out else "none"}" '
+             f'stroke="{colour}" stroke-width="2.4"'
+             + (f' stroke-dasharray="{dash}"' if dash else "") + "/>"]
+    # A hatched area is named in its middle; anything else beside its first
+    # side, since the middle of the lot's outline is where the house is.
+    xy = np.array([[float(v) for v in p.split(",")] for p in pts])
+    x, y = xy.mean(axis=0) if keep_out else (xy[0] + xy[1]) / 2 - (0, 6)
+    name = html.escape(line.line_id) + (" (keep-out)" if keep_out else "")
+    parts.append(f'<text x="{x:.1f}" y="{y:.1f}" class="outline-label">{name}</text>')
+    return parts
+
 
 def _image_data_uri(layer, size: int = MAP_PX) -> tuple[str, tuple]:
     """Base64 PNG of the basemap, plus its extent."""
@@ -90,7 +120,7 @@ def _map_svg(plan, extent, uri: str | None, size: int = MAP_PX,
         return to_px(e, n)
 
     parts = [f'<svg viewBox="0 0 {size} {size}" class="plan" '
-             f'xmlns="http://www.w3.org/2000/svg">']
+             f'xmlns="http://www.w3.org/2000/svg">', HATCH_DEF]
     if uri:
         parts.append(f'<image href="{uri}" x="0" y="0" width="{size}" '
                      f'height="{size}"/>')
@@ -117,6 +147,8 @@ def _map_svg(plan, extent, uri: str | None, size: int = MAP_PX,
                 x, y = (float(v) for v in pts[0].split(","))
                 parts.append(f'<text x="{x}" y="{y - 8}" class="guide-label">'
                              f'{html.escape(line.line_id)}: walk or mow first</text>')
+            elif line.is_outline:
+                parts += _outline(line, pts)
             else:
                 parts.append(f'<polyline {geometry} stroke="#1f5fa8" '
                              f'stroke-width="2.4" stroke-dasharray="9 5"/>')
@@ -267,6 +299,8 @@ def write_field_sheet(plan, path: str | Path, *, basemap=None, site=None,
                   paint-order: stroke; stroke: #fff; stroke-width: 3px; }}
   .setup-label {{ font: 700 11px sans-serif; fill: #e67e22; text-anchor: middle;
                   paint-order: stroke; stroke: #fff; stroke-width: 3px; }}
+  .outline-label {{ font: 700 12px sans-serif; fill: #1a1a1a; text-anchor: middle;
+                    paint-order: stroke; stroke: #fff; stroke-width: 3px; }}
   table {{ border-collapse: collapse; width: 100%; margin-top: 14px;
            font-size: 12px; }}
   th, td {{ border: 1px solid #999; padding: 4px 6px; text-align: left; }}
@@ -321,7 +355,12 @@ def write_field_sheet(plan, path: str | Path, *, basemap=None, site=None,
   <span class="swatch" style="background:#2b7a3d"></span>control / reference
   <span class="swatch" style="background:#e67e22"></span>laser setup
   <span class="swatch" style="background:#783ca0"></span>tie transect: walk or mow these first
+  <span class="swatch" style="background:repeating-linear-gradient(-45deg,#555 0 1px,#eee 1px 4px)"></span>keep-out outline
   &nbsp;&mdash;&nbsp; positions are <b>feet from the site origin</b>, east then north.
+  <br>
+  <b>Outlines</b> &mdash; a building, bed, fence, street or the lot. Each corner is a
+  numbered shot on its own row: locate it by GNSS or tape like any other, and
+  the outline follows.
   <br>
   <b>Rod (in)</b> is the only column that must be filled in on every row.
   <br>

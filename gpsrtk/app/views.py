@@ -188,6 +188,8 @@ def points_note(state) -> str:
                 f"session{'s' if hidden != 1 else ''} hidden")
     if n > MAX_SCATTER:
         note += f" (drawing {MAX_SCATTER:,})"
+    if state.kept_out:
+        note += f" - {state.kept_out:,} inside keep-out outlines left out"
     return note
 
 

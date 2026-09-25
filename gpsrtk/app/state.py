@@ -24,6 +24,11 @@ QC, so one outing can be judged on its own. It comes after the vertical model
 on purpose: the datum is always solved from every outing, so looking at one
 of them never moves it.
 
+Keep-out outlines in the plan come last, for the same reason: points inside a
+house or a planting bed are left out of the result, and so of the surface,
+the QC and the exports, but a pass that clipped a bed still helps tie its
+outing's height to the others.
+
 Surfaces are built at a lower resolution for interaction than for export.
 Gridding 1024x1024 takes a second or two, which is fine once at export time and
 intolerable on every checkbox toggle.
@@ -46,7 +51,8 @@ from ..georef import ImageryOffset, solve_imagery_offset
 from ..plan import FillReport, Plan
 from ..project import BasemapState, Project
 from ..site import Site, default_site
-from ..surface import PREVIEW_SIZE, Extent, Surface, build_surface
+from ..surface import (PREVIEW_SIZE, Extent, Surface, build_surface,
+                       inside_polygons)
 from ..vertical import VerticalModel
 from .events import Signal
 
@@ -167,6 +173,11 @@ class AppState:
         # the surface and the QC. Names absent from the data are ignored.
         self.hidden_sessions: set[str] = set()
         self.surface_from_shown: bool = False
+        # How many result points the plan's keep-out outlines took out, and
+        # the outlines they were taken out by, so an edit that moves one
+        # rebuilds the surface and an edit that does not, does not.
+        self.kept_out: int = 0
+        self._kept_out_by: tuple = ()
         self.surface: Surface | None = None
         self.vertical: VerticalModel | None = None
 
@@ -599,15 +610,25 @@ class AppState:
         self.filtered = self.chain.run(src)
         self.corrected = (self.vertical.apply(self.filtered)
                           if self.vertical is not None else self.filtered)
-        self.result = (self.shown(self.corrected) if self.surface_from_shown
-                       else self.corrected)
+        result = (self.shown(self.corrected) if self.surface_from_shown
+                  else self.corrected)
+        self._kept_out_by = self._keep_out_signature()
+        self.kept_out = 0
+        areas = self.keep_out()
+        if areas and len(result):
+            inside = inside_polygons(areas, result.df[E], result.df[N])
+            if inside.any():
+                self.kept_out = int(inside.sum())
+                result = result.select(~inside, "outside keep-out outlines")
+        self.result = result
 
         self.surface = None
         if build and len(self.result) >= 3:
             try:
                 self.surface = build_surface(self.result, self.site,
                                              size=PREVIEW_SIZE,
-                                             fixed=self.laser_points())
+                                             fixed=self.laser_points(),
+                                             keep_out=areas)
             except Exception as exc:                      # noqa: BLE001
                 self.statusMessage.emit(f"Could not build surface: {exc}")
         elif build:
@@ -648,14 +669,24 @@ class AppState:
         span = Extent.square_around(b.x.to_numpy(), b.y.to_numpy()).width
         size = int(min(1024, max(256, round(span / cell_m))))
         return build_surface(self.result, self.site, size=size,
-                             fixed=self.laser_points())
+                             fixed=self.laser_points(),
+                             keep_out=self.keep_out())
 
     def export_surface(self) -> Surface | None:
         """Full-resolution surface for writing rasters."""
         if self.result is None or len(self.result) < 3:
             return None
         return build_surface(self.result, self.site, size=EXPORT_SIZE,
-                             fixed=self.laser_points())
+                             fixed=self.laser_points(),
+                             keep_out=self.keep_out())
+
+    def keep_out(self) -> list:
+        """The plan's keep-out outlines, as (k, 2) e/n polygons."""
+        return [xy for _, xy in self.plan.keep_out_areas()]
+
+    def _keep_out_signature(self) -> tuple:
+        return tuple((name, xy.round(4).tobytes())
+                     for name, xy in self.plan.keep_out_areas())
 
     def laser_points(self):
         """Terrain rod shots at their laser elevations, for the surface.
@@ -700,9 +731,15 @@ class AppState:
         frame = pd.DataFrame({"station": V.stations(shots, marks).astype(str),
                               "e": d[E].to_numpy(), "n": d[N].to_numpy(),
                               "z": d[ELEV].to_numpy(dtype=float)})
-        return (frame.groupby("station", sort=False)
-                .agg(e=("e", "mean"), n=("n", "mean"), z=("z", "first"))
-                .reset_index())
+        frame = (frame.groupby("station", sort=False)
+                 .agg(e=("e", "mean"), n=("n", "mean"), z=("z", "first"))
+                 .reset_index())
+        # A terrain shot inside a keep-out outline is not on the terrain the
+        # surface describes, whatever its purpose says.
+        areas = self.keep_out()
+        if areas:
+            frame = frame.loc[~inside_polygons(areas, frame["e"], frame["n"])]
+        return frame.reset_index(drop=True) if len(frame) else None
 
     def set_active_layer(self, name: str) -> None:
         if name != self.active_layer and name in self.layers:
@@ -1125,6 +1162,9 @@ class AppState:
         A failed re-solve is reported, not raised: the edit itself succeeded,
         and refusing it because the network is momentarily unsolvable (a
         benchmark shot not yet typed in) would be backwards.
+
+        Keep-out outlines decide what the surface is made of, so an edit that
+        moves, adds or removes one rebuilds it - and only such an edit.
         """
         self.refresh_plan_layer()
         if (self.vertical is not None
@@ -1133,6 +1173,9 @@ class AppState:
                 self.solve_vertical(self.vertical.mode)
             except Exception as exc:                        # noqa: BLE001
                 self.statusMessage.emit(f"Could not re-solve: {exc}")
+        if (self.source is not None
+                and self._keep_out_signature() != self._kept_out_by):
+            self.recompute()
 
     def open_plan(self, path: str | Path) -> Plan:
         plan = Plan.load(path)

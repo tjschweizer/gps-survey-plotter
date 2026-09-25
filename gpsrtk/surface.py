@@ -29,6 +29,11 @@ The sequence, and why each step is there:
                     `FIXED_RADIUS_M` and are honoured exactly: after smoothing,
                     a correction made of small compact bumps is added so that
                     the raster, sampled at each shot, returns its elevation.
+  keep-out          Optional. Polygons whose inside is not terrain - a house,
+                    a planting bed, the street. Samples inside them are
+                    dropped before gridding and their pixels are masked, so
+                    the rim just inside a wall, which the distance mask
+                    leaves as "measured", is not presented as ground either.
 
 Row order is ascending northing: row 0 is the SOUTH edge, matching the meshgrid.
 Raster formats want north-up, so `to_image()` flips. Keeping the flip at the
@@ -177,6 +182,31 @@ def bin_cells(ps: PointSet, cell: float, site: Site | None = None,
     return g.reset_index()
 
 
+def inside_polygons(polygons, e, n) -> np.ndarray:
+    """Which points lie inside any of the polygons, each a (k, 2) of e/n.
+
+    Any shape of `e` and `n` - a column of samples or a whole grid. Each
+    polygon is only tested against the points in its bounding box, so a
+    small outline over a large raster costs little.
+    """
+    from matplotlib.path import Path
+
+    e = np.asarray(e, dtype=float)
+    n = np.asarray(n, dtype=float)
+    inside = np.zeros(e.shape, dtype=bool)
+    for poly in polygons:
+        poly = np.asarray(poly, dtype=float)
+        if len(poly) < 3:
+            continue
+        lo, hi = poly.min(axis=0), poly.max(axis=0)
+        near = ((e >= lo[0]) & (e <= hi[0]) & (n >= lo[1]) & (n <= hi[1])
+                & ~inside)
+        if near.any():
+            inside[near] = Path(poly).contains_points(
+                np.column_stack([e[near], n[near]]))
+    return inside
+
+
 def _bilinear(z, gx, gy, e, n) -> np.ndarray:
     fx = np.clip((e - gx[0]) / (gx[1] - gx[0]), 0, len(gx) - 1)
     fy = np.clip((n - gy[0]) / (gy[1] - gy[0]), 0, len(gy) - 1)
@@ -230,7 +260,8 @@ def build_surface(ps: PointSet, site: Site, *,
                   sigma: float | None = None,
                   extent: Extent | None = None,
                   z_column: str | None = None,
-                  fixed: pd.DataFrame | None = None) -> Surface:
+                  fixed: pd.DataFrame | None = None,
+                  keep_out=None) -> Surface:
     """Grid a point set into a Surface. Defaults come from the site.
 
     Height comes from the derived elevation column once a vertical model has
@@ -239,6 +270,10 @@ def build_surface(ps: PointSet, site: Site, *,
     `fixed`, off by default, is a frame of `e`, `n`, `z` points on the same
     vertical datum - laser terrain shots - that replace the GNSS bins within
     `FIXED_RADIUS_M` and that the surface passes through exactly.
+
+    `keep_out`, off by default, is a list of (k, 2) e/n polygons whose
+    inside is not terrain: nothing inside them is gridded, and they are
+    masked.
     """
     sd = site.surface
     size = size or sd.raster_size
@@ -253,6 +288,14 @@ def build_surface(ps: PointSet, site: Site, *,
 
     z_column = z_column or elevation_column(ps)
     b = bin_cells(ps, cell, site, z_column)
+    keep_out = [np.asarray(p, dtype=float) for p in keep_out or ()
+                if len(p) >= 3]
+    if keep_out:
+        b = b.loc[~inside_polygons(keep_out, b.x, b.y)].reset_index(drop=True)
+        if fixed is not None and len(fixed):
+            fixed = fixed.loc[~inside_polygons(keep_out, fixed[E], fixed[N])]
+        if len(b) == 0:
+            raise ValueError("every sample lies inside a keep-out area")
     if fixed is not None and len(fixed):
         fx = fixed[E].to_numpy(dtype=float)
         fy = fixed[N].to_numpy(dtype=float)
@@ -280,6 +323,8 @@ def build_surface(ps: PointSet, site: Site, *,
     have[cyi, cxi] = True
     far = distance_transform_edt(~have) * px > mask_distance
     mask = np.isnan(z) | far
+    if keep_out:
+        mask |= inside_polygons(keep_out, GX, GY)
 
     z = np.where(np.isnan(z),
                  griddata(pts, b.z.to_numpy(), (GX, GY), method="nearest"), z)

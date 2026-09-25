@@ -977,6 +977,44 @@ def create_app(state: AppState | None = None, *, vector_providers=None,
             line = plan_edit(lambda: PE.add_line(st.plan, vertices))
             return srv.reply(line=line.line_id if line else None)
 
+    # Outlines. Any of these can move a keep-out area, which rebuilds the
+    # surface, so they say so while they work.
+
+    @app.post("/api/plan/outline/add")
+    def plan_add_outline(body: dict = Body(...)):
+        with srv.acting():
+            vertices = [st.site.to_projected(float(x), float(y))
+                        for x, y in body.get("vertices", [])]
+            line = plan_edit(lambda: PE.add_outline(
+                st.plan, vertices, str(body.get("kind") or "building")),
+                "Rebuilding the surface…")
+            return srv.reply(outline=line.line_id if line else None)
+
+    @app.post("/api/plan/outline/edit")
+    def plan_edit_outline(body: dict = Body(...)):
+        def edit():
+            name = str(body["line_id"])
+            if "kind" in body:
+                name = PE.set_outline_kind(st.plan, name, str(body["kind"]))
+            if "closed" in body:
+                PE.set_outline_closed(st.plan, name, bool(body["closed"]))
+            if "keep_out" in body:
+                PE.set_outline_keep_out(st.plan, name, bool(body["keep_out"]))
+            if "name" in body:
+                name = PE.rename_outline(st.plan, name, body["name"])
+            return name
+
+        with srv.acting():
+            return srv.reply(outline=plan_edit(edit, "Rebuilding the surface…"))
+
+    @app.post("/api/plan/outline/delete")
+    def plan_delete_outline(body: dict = Body(...)):
+        with srv.acting():
+            gone = plan_edit(lambda: PE.delete_outline(
+                st.plan, str(body["line_id"]), confirm=bool(body.get("confirm"))),
+                "Rebuilding the surface…")
+            return srv.reply(deleted=gone)
+
     @app.post("/api/plan/transects")
     def plan_transects():
         from ..model.pointset import SESSION as S
