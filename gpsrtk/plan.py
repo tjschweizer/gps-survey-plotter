@@ -44,6 +44,7 @@ from pathlib import Path
 
 import numpy as np
 
+from .fileio import write_text_atomic
 from .units import M_PER_FT, M_PER_IN, ft_to_m, m_to_ft
 
 SUFFIX = ".yardplan"
@@ -532,7 +533,7 @@ class Plan:
         if path.suffix != SUFFIX:
             path = path.with_suffix(SUFFIX)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(self.to_dict(), indent=2), encoding="utf-8")
+        write_text_atomic(path, json.dumps(self.to_dict(), indent=2))
         return path
 
     @classmethod

@@ -219,7 +219,9 @@ class Site:
         return cls(**d)
 
     def save(self, path: str | Path) -> None:
-        Path(path).write_text(json.dumps(self.to_dict(), indent=2), "utf-8")
+        from .fileio import write_text_atomic
+
+        write_text_atomic(path, json.dumps(self.to_dict(), indent=2))
 
     @classmethod
     def load(cls, path: str | Path) -> "Site":

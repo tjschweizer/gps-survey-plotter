@@ -34,6 +34,7 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .fileio import write_text_atomic
 from .site import Site
 
 # 3: the site gained control marks (A3). A version 2 build refuses a
@@ -151,7 +152,7 @@ class Project:
         # be a liar if it still claimed to be v1.
         self.version = VERSION
         payload = self.to_dict(base=path.parent)
-        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        write_text_atomic(path, json.dumps(payload, indent=2))
         self.path = path
         return path
 

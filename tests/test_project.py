@@ -503,3 +503,53 @@ def test_a_black_holed_service_fails_in_seconds_not_minutes():
 
     assert imagery.TIMEOUT[0] == vector.TIMEOUT[0] == 10.0
     assert imagery.TIMEOUT[1] == 60.0
+
+
+# --- atomic saves ---------------------------------------------------------------
+
+def test_a_save_that_fails_leaves_the_old_file_whole(stubbed, tmp_path, monkeypatch):
+    """Written in place, an interrupted save left a truncated project - the
+    only record of the solved datum. Now it is the old file or the new one."""
+    import os
+
+    saved = stubbed.save_project(tmp_path / "keep.yardproj")
+    before = saved.read_bytes()
+
+    def refuse(src, dst):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(os, "replace", refuse)
+    stubbed.plan.add_point(449712.0, 4604565.0)
+    with pytest.raises(OSError, match="disk full"):
+        stubbed.save_project(saved)
+    assert saved.read_bytes() == before
+    assert [p.name for p in tmp_path.iterdir()] == ["keep.yardproj"], "no temp left"
+
+
+def test_a_save_retries_once_past_a_sync_lock(tmp_path, monkeypatch):
+    """OneDrive locks a file for a moment while it syncs it."""
+    import os
+
+    from gpsrtk import fileio
+    from gpsrtk.plan import Plan
+    from gpsrtk.site import Site
+
+    real, calls = os.replace, []
+
+    def locked_once(src, dst):
+        calls.append(dst)
+        if len(calls) == 1:
+            raise PermissionError("in use")
+        return real(src, dst)
+
+    monkeypatch.setattr(os, "replace", locked_once)
+    monkeypatch.setattr(fileio, "RETRY_AFTER_S", 0.0)
+    plan = Plan()
+    plan.add_point(449712.0, 4604565.0)
+    path = plan.save(tmp_path / "shots")
+    assert Plan.load(path).points[0].number == 1 and len(calls) == 2
+
+    calls.clear()
+    example_site().save(tmp_path / "site.json")
+    assert Site.load(tmp_path / "site.json").name == "example site"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["shots.yardplan", "site.json"]

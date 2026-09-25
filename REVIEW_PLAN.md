@@ -125,6 +125,7 @@ These were set by the owner and apply to every item.
 | After C29 | 427 passed, 51 skipped, 56 deselected | 51 passed |
 | After C10 | 428 passed, 51 skipped, 56 deselected | — |
 | After C24 | 429 passed, 51 skipped, 56 deselected | — |
+| After C27 | 431 passed, 51 skipped, 56 deselected | — |
 
 Of the 55 skips, 50 need real data. The other 5 are network tests that the
 sandbox proxy refused.
@@ -215,8 +216,8 @@ These answers change the designs in section 5.
 | 35 | C29 | Solve report wording | UI | ✅ `eae8315` |
 | 36 | C10 | World file on the grid | processing | ✅ `2143862` |
 | 37 | C24 | Surface smoothing sized in metres | processing | ✅ `116824f` |
-| 38 | C26 | .gitignore covers exports | code health | ✅ |
-| 39 | C27 | Atomic saves | code health | todo |
+| 38 | C26 | .gitignore covers exports | code health | ✅ `757b32b` |
+| 39 | C27 | Atomic saves | code health | ✅ |
 | 40 | C28 | Server hardening | code health | todo |
 | 41 | C30 | Hide the do-nothing surface-residual stage | code health | todo |
 | 42 | C31 | Network tests stay off under any `-m` | code health | todo |
@@ -1279,7 +1280,13 @@ Evidence for these is in the review screenshots: synthetic export,
 - **Verify:** `git check-ignore`.
 - **Breaking?:** no.
 
-**C27 — Atomic saves**
+**C27 — Atomic saves** ✅
+- **Done:** new `gpsrtk/fileio.py` `write_text_atomic(path, text)`: a
+  temporary file beside the target, `os.replace`, one retry after
+  `RETRY_AFTER_S` (0.5 s) on `PermissionError`, and the temporary file
+  removed if anything fails. Used by `Project.save`, `Plan.save` and
+  `Site.save`. Tests: `test_project.py::test_a_save_that_fails_leaves_the_old_file_whole`,
+  `::test_a_save_retries_once_past_a_sync_lock`.
 - **What:** write to a temporary file in the same folder, then `os.replace`,
   with one retry on `PermissionError` (OneDrive locks). Applies to
   `project.py:119`, `plan.py:433` and `site.save`.
