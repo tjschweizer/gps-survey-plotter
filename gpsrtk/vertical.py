@@ -196,6 +196,62 @@ def _station_of(unknown: str) -> int | str:
 
 # --- laser level network --------------------------------------------------
 
+# A laser level read to the nearest 1/8 in closes within a quarter inch when
+# nothing is wrong. Beyond it, a reading was mis-read or mis-booked, or the
+# instrument moved or is out of adjustment.
+SETUP_TOLERANCE_IN = 0.25
+
+
+@dataclass
+class SetupCheck:
+    """How well one laser setup checks itself.
+
+    The network has few degrees of freedom, so a mis-read rod hides easily.
+    What exposes one is a station read twice from the setup (a benchmark at
+    the open and the close) or read from other setups too; this says which
+    of those the setup had, and what they showed.
+    """
+
+    setup: str
+    shots: int
+    repeats: list[tuple] = field(default_factory=list)   # (station, spread in)
+    shared: list = field(default_factory=list)           # stations other setups read
+    worst_in: float = 0.0                                # worst |residual|, in
+    worst_station: object = None
+    tolerance_in: float = SETUP_TOLERANCE_IN
+
+    @property
+    def no_check(self) -> bool:
+        """Nothing in the data can catch a mis-read on this setup."""
+        return not self.repeats and len(self.shared) < 2
+
+    @property
+    def over(self) -> bool:
+        return (self.worst_in > self.tolerance_in
+                or any(s > self.tolerance_in for _, s in self.repeats))
+
+    @property
+    def flagged(self) -> bool:
+        return self.no_check or self.over
+
+    def describe(self) -> str:
+        bits = [f"{self.shots} shot{'s' if self.shots != 1 else ''}"]
+        if self.repeats:
+            bits.append("repeat " + ", ".join(f"{st} {s:.2f} in apart"
+                                              for st, s in self.repeats))
+        if self.shared:
+            bits.append("shares " + describe_stations(self.shared)
+                        + " with other setups")
+        if not self.no_check:
+            bits.append(f"worst residual {self.worst_in:.2f} in"
+                        + (f" ({self.worst_station})"
+                           if self.worst_station is not None else ""))
+        verdict = ("NO CHECK - no repeat reading and fewer than 2 stations "
+                   "shared with other setups" if self.no_check
+                   else f"OVER {self.tolerance_in:g} in" if self.over else "ok")
+        return f"  setup {self.setup}: " + "; ".join(bits) + f"  - {verdict}"
+
+
 @dataclass
 class LevelNetwork:
     """Solved laser levelling: instrument heights and station elevations."""
@@ -205,6 +261,11 @@ class LevelNetwork:
     instrument_heights: dict[str, float]  # setup id -> HI, metres
     benchmark: int | str
     benchmark_elev_m: float
+    setups: list[SetupCheck] = field(default_factory=list)
+
+    @property
+    def flagged_setups(self) -> list[SetupCheck]:
+        return [c for c in self.setups if c.flagged]
 
     def describe(self) -> str:
         lines = ["Laser level network", self.adjustment.describe(unit="in",
@@ -213,6 +274,10 @@ class LevelNetwork:
             lines.append(f"  setup {setup}: HI {m_to_ft(hi):.4f} ft")
         lines.append(f"  benchmark: station {self.benchmark} held at "
                      f"{m_to_ft(self.benchmark_elev_m):.3f} ft")
+        if self.setups:
+            lines.append(f"  Closure per setup (tolerance "
+                         f"{self.setups[0].tolerance_in:g} in):")
+            lines += [c.describe() for c in self.setups]
         if not self.adjustment.has_redundancy:
             lines.append(
                 "  To gain redundancy, shoot at least TWO common points from "
@@ -250,7 +315,8 @@ def resolve_setups(spots: PointSet, column: str = SETUP) -> pd.Series:
 def level_network(spots: PointSet, *, benchmark_id: int | str = 1,
                   benchmark_elev_ft: float = 100.0,
                   rod_sigma_in: float = 0.125,
-                  marks=()) -> LevelNetwork:
+                  marks=(),
+                  tolerance_in: float = SETUP_TOLERANCE_IN) -> LevelNetwork:
     """Solve instrument heights and station elevations from rod readings.
 
     Observation equation, per shot:  HI(setup) - elevation(station) = rod
@@ -275,11 +341,13 @@ def level_network(spots: PointSet, *, benchmark_id: int | str = 1,
 
     ls = LeastSquares()
     weight = 1.0 / (rod_sigma_in * M_PER_IN) ** 2
+    observed = []                         # (setup, station, rod in), in order
     for i in d.index[have]:
         rod_m = float(d.at[i, ROD_IN]) * M_PER_IN
         st = names.at[i]
         ls.add({f"HI:{setups.at[i]}": 1.0, f"EL:{st}": -1.0}, rod_m,
                weight=weight, label=f"station {st} from setup {setups.at[i]}")
+        observed.append((setups.at[i], st, float(d.at[i, ROD_IN])))
 
     bench_m = ft_to_m(benchmark_elev_ft)
     ls.constrain(f"EL:{benchmark_id}", bench_m, weight=weight * 1e6)
@@ -306,7 +374,35 @@ def level_network(spots: PointSet, *, benchmark_id: int | str = 1,
         instrument_heights={k.split(":", 1)[1]: v
                             for k, v in adj.values.items() if k.startswith("HI:")},
         benchmark=benchmark_id,
-        benchmark_elev_m=bench_m)
+        benchmark_elev_m=bench_m,
+        setups=_setup_checks(observed, adj.obs_residuals / M_PER_IN,
+                             tolerance_in))
+
+
+def _setup_checks(observed, residuals_in, tolerance_in) -> list[SetupCheck]:
+    """One `SetupCheck` per setup, from the observations in solve order."""
+    by_setup: dict[str, list] = {}
+    for (setup, st, rod), r in zip(observed, residuals_in):
+        by_setup.setdefault(setup, []).append((st, rod, float(r)))
+    readers: dict = {}
+    for setup, rows in by_setup.items():
+        for st, _, _ in rows:
+            readers.setdefault(st, set()).add(setup)
+
+    checks = []
+    for setup in sorted(by_setup, key=lambda s: (not s.isdigit(), s.zfill(8))):
+        rows = by_setup[setup]
+        rods: dict = {}
+        for st, rod, _ in rows:
+            rods.setdefault(st, []).append(rod)
+        repeats = [(st, max(v) - min(v)) for st, v in rods.items() if len(v) > 1]
+        shared = sort_stations(st for st in rods if len(readers[st]) > 1)
+        worst = max(rows, key=lambda row: abs(row[2]))
+        checks.append(SetupCheck(
+            setup=setup, shots=len(rows), repeats=repeats, shared=shared,
+            worst_in=abs(worst[2]), worst_station=worst[0],
+            tolerance_in=tolerance_in))
+    return checks
 
 
 # --- session offsets ------------------------------------------------------

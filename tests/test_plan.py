@@ -318,3 +318,21 @@ def test_field_sheet_survives_an_empty_plan(tmp_path):
 
     out = write_field_sheet(Plan(name="nothing yet"), tmp_path / "e.html")
     assert out.exists()
+
+
+def test_the_field_sheet_has_a_closure_block_per_setup(tmp_path):
+    """Open and close on the benchmark, and a two-peg check, for each setup."""
+    from gpsrtk.io.fieldsheet import write_field_sheet
+    from gpsrtk.plan import Plan, PlannedSetup
+
+    plan = Plan()
+    plan.add_point(449712.0, 4604565.0)
+    text = write_field_sheet(plan, tmp_path / "a.html").read_text("utf-8")
+    assert text.count('class="setup"') == 2              # two blank blocks
+    assert "Backsight on ____ (station) at open" in text
+    assert "Calibration (two-peg) check: date / result" in text
+
+    plan.setups = [PlannedSetup("A"), PlannedSetup("B"), PlannedSetup("C")]
+    text = write_field_sheet(plan, tmp_path / "b.html").read_text("utf-8")
+    assert text.count('class="setup"') == 3
+    assert "Laser setup C" in text and "Observer" in text

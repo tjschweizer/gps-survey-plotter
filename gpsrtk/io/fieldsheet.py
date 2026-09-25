@@ -172,6 +172,31 @@ def _rows(plan, site) -> str:
     return "\n".join(out)
 
 
+def _setup_blocks(plan) -> str:
+    """A closure block per planned laser setup, or two blank ones.
+
+    The network has few degrees of freedom, so a mis-read rod hides easily.
+    Reading the benchmark at the open AND the close of every setup is what
+    catches one, and a periodic two-peg check is what catches a laser out of
+    adjustment. Printing the boxes is what gets them done.
+    """
+    names = [html.escape(s.name) for s in plan.setups] or ["", ""]
+    blocks = []
+    for name in names:
+        blocks.append(
+            '<table class="setup">'
+            f'<tr><th colspan="2">Laser setup {name or "____"}</th></tr>'
+            '<tr><td>Backsight on ____ (station) at open</td>'
+            '<td class="blank"></td></tr>'
+            '<tr><td>Backsight on ____ at close</td>'
+            '<td class="blank"></td></tr>'
+            '<tr><td>Calibration (two-peg) check: date / result</td>'
+            '<td class="blank"></td></tr>'
+            '<tr><td>Observer</td><td class="blank"></td></tr>'
+            '</table>')
+    return '<div class="setups">' + "\n".join(blocks) + "</div>"
+
+
 def write_field_sheet(plan, path: str | Path, *, basemap=None, site=None,
                       title: str = "", note: str = "",
                       imagery_offset=(0.0, 0.0)) -> Path:
@@ -224,6 +249,9 @@ def write_field_sheet(plan, path: str | Path, *, basemap=None, site=None,
   .blank.tie {{ min-width: 92px; background:
                 linear-gradient(90deg, #fff 0 33%, #ccc 33% calc(33% + 1px),
                                 #fff calc(33% + 1px) 100%); }}
+  .setups {{ display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }}
+  table.setup {{ width: auto; margin-top: 0; }}
+  table.setup td:first-child {{ white-space: nowrap; }}
   .legend {{ font-size: 12px; color: #444; margin-top: 10px; }}
   .legend b {{ color: #1a1a1a; }}
   .swatch {{ display: inline-block; width: 10px; height: 10px;
@@ -273,6 +301,8 @@ def write_field_sheet(plan, path: str | Path, *, basemap=None, site=None,
   like. The same name means the same physical point. Anything else can keep
   SW Maps' own ID.
 </div>
+
+{_setup_blocks(plan)}
 
 <table>
   <thead>

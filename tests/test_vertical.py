@@ -485,3 +485,58 @@ def test_differences_added_in_bulk_solve_the_same():
     assert a.values == pytest.approx(b.values)
     assert a.dof == b.dof == 1
     assert len(many.components()) == 1
+
+
+# --- closure per setup (synthetic) -------------------------------------------
+
+def _with_benchmark_reads(state, *rods, setup=0):
+    """The synthetic spots plus readings on BM1 from one setup."""
+    import pandas as pd
+
+    spots = state.layers["spots"]
+    d = spots.df
+    extra = d.iloc[[0] * len(rods)].copy()
+    extra["point_id"] = pd.array([900 + k for k in range(len(rods))], dtype="Int64")
+    extra[P.STATION] = "BM1"
+    extra[P.ROD_IN] = list(rods)
+    extra[P.SETUP] = setup
+    return spots.with_frame(pd.concat([d, extra], ignore_index=True), "bm1")
+
+
+def test_a_half_inch_closing_error_is_flagged(state):
+    """BM1 read at the open and the close of setup 0, half an inch apart."""
+    net = V.level_network(_with_benchmark_reads(state, 50.0, 50.5))
+    setup0 = next(c for c in net.setups if c.setup == "0")
+    assert setup0.repeats == [("BM1", pytest.approx(0.5))]
+    assert setup0.over and setup0.flagged
+    assert "OVER 0.25 in" in net.describe()
+    assert setup0 in net.flagged_setups
+
+
+def test_a_clean_network_passes(state):
+    net = V.level_network(_with_benchmark_reads(state, 50.0, 50.0))
+    assert not net.flagged_setups
+    text = net.describe()
+    assert "setup 0: 10 shots; repeat BM1 0.00 in apart; shares 7-8" in text
+    assert "setup 1: 6 shots; shares 7-8 with other setups" in text
+
+
+def test_a_setup_with_nothing_to_check_it_says_so(state):
+    import pandas as pd
+
+    spots = state.layers["spots"]
+    d = spots.df.copy()
+    d = d[~((d[P.SETUP] == 1) & d["point_id"].isin([8]))]      # only 7 shared
+    net = V.level_network(spots.with_frame(d, "one shared"))
+    assert {c.setup for c in net.flagged_setups} == {"0", "1"}
+    assert all(c.no_check for c in net.flagged_setups)
+    assert "NO CHECK" in net.describe()
+
+
+def test_the_solve_notice_names_setups_to_look_at(state):
+    from gpsrtk.app import report
+
+    spots = _with_benchmark_reads(state, 50.0, 50.6)
+    model = V.solve_vertical(state.filtered, spots, mode="local")
+    text = report.solve_notice(model)
+    assert "Laser setups to look at" in text and "two-peg" in text

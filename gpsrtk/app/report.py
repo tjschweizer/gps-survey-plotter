@@ -78,6 +78,13 @@ def solve_notice(model) -> str:
             "The laser network has no redundancy, so a mis-read rod would "
             "be invisible. Shoot at least two points from each pair of "
             "setups next time.")
+    if model.level is not None and model.level.flagged_setups:
+        warnings.append(
+            "Laser setups to look at:\n"
+            + "\n".join(c.describe() for c in model.level.flagged_setups)
+            + "\nClose every setup on the benchmark (read it at the open and "
+              "the close), and check the laser's calibration (two-peg test) "
+              "now and then.")
     return model.describe() + ("\n\n" + "\n\n".join(warnings) if warnings else "")
 
 

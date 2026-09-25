@@ -105,6 +105,7 @@ These were set by the owner and apply to every item.
 | After O3, C3 | 376 passed, 51 skipped, 40 deselected | 35 passed |
 | After A6 | 381 passed, 51 skipped, 40 deselected | 35 passed |
 | After A2 | 386 passed, 51 skipped, 40 deselected | 35 passed |
+| After A4 | 391 passed, 51 skipped, 40 deselected | 35 passed |
 
 Of the 55 skips, 50 need real data. The other 5 are network tests that the
 sandbox proxy refused.
@@ -174,8 +175,8 @@ These answers change the designs in section 5.
 | 14 | O3 | Filter-chain cache keyed by a token | code health | ✅ `e03aedc` |
 | 15 | C3 | Heights labelled by vertical model | processing | ✅ `6a8f32f` |
 | 16 | A6 | Source fingerprints | code health | ✅ `af97773` |
-| 17 | A2 | Fill plan shots from SW Maps records by station | workflow | ✅ |
-| 18 | A4 | Per-setup level closure and laser check | workflow | todo |
+| 17 | A2 | Fill plan shots from SW Maps records by station | workflow | ✅ `ea97af3` |
+| 18 | A4 | Per-setup level closure and laser check | workflow | ✅ |
 | 19 | A3 | Control marks and start/end check shots | workflow | todo (**format v3**) |
 | 20 | A5 | Tie transects | workflow | todo |
 | 21 | A1 | Laser terrain shots in the surface (and the Revit file) | processing | todo |
@@ -740,7 +741,21 @@ follow it in SW Maps:
   a float record is ignored; the network has no duplicate observation.
 - **Breaking?:** no. It uses existing plan fields.
 
-**A4 — Per-setup level closure and laser check**
+**A4 — Per-setup level closure and laser check** ✅
+- **Done:** `vertical.SetupCheck` (shots, repeats as (station, spread in),
+  stations shared with other setups, worst |residual| in, `no_check`,
+  `over`, `flagged`) and `SETUP_TOLERANCE_IN` = 0.25. `level_network`
+  records each observation's (setup, station, rod) and builds
+  `LevelNetwork.setups` from the residuals; `LevelNetwork.describe` (the
+  Vertical panel) prints "Closure per setup"; `report.solve_notice` adds
+  "Laser setups to look at" for flagged ones. `level_network(tolerance_in=)`.
+  Field sheet: `_setup_blocks` prints a block per planned setup (two blank
+  ones if none) with the four rows the item lists, between the legend and
+  the readings table. Tests: `test_vertical.py::test_a_half_inch_closing_error_is_flagged`,
+  `::test_a_clean_network_passes`,
+  `::test_a_setup_with_nothing_to_check_it_says_so`,
+  `::test_the_solve_notice_names_setups_to_look_at`,
+  `test_plan.py::test_the_field_sheet_has_a_closure_block_per_setup`.
 - **What:**
   - **Report:** after the level network is solved, one entry per setup: the
     number of shots, repeat readings of the same station within the setup
