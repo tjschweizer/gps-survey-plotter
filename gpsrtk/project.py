@@ -14,6 +14,12 @@ Imagery is referenced by provider name only. The pixels live in the on-disk
 cache keyed by extent, so reopening a project reuses them without a round trip
 to a public service that may not be up.
 
+Each source is also recorded by its size and SHA-256 (`source_fingerprints`,
+an optional key older builds ignore). The stored vertical terms are re-applied
+rather than re-solved, which is what makes a reopened project exact - and
+also what would hand those terms, silently, to a file that had been
+re-exported with different contents under the same name.
+
 The shot plan travels WITH the project. It used not to, and that was a data
 loss bug rather than a missing feature: typing measured coordinates into the
 plan table and then saving the project wrote a file that silently did not
@@ -23,6 +29,7 @@ to. `.yardplan` still exists for carrying a plan between projects.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -31,6 +38,26 @@ from .site import Site
 
 VERSION = 2
 SUFFIX = ".yardproj"
+
+
+def fingerprint(path: str | Path) -> dict:
+    """Size and SHA-256 of an export: what it holds, whatever it is called.
+
+    A folder of CSVs (which the SW Maps reader also accepts) is hashed file
+    by file in name order.
+    """
+    path = Path(path)
+    digest = hashlib.sha256()
+    size = 0
+    files = sorted(path.glob("*.csv")) if path.is_dir() else [path]
+    for f in files:
+        if path.is_dir():
+            digest.update(f.name.encode("utf-8") + b"\0")
+        with open(f, "rb") as fh:
+            for block in iter(lambda: fh.read(1 << 20), b""):
+                digest.update(block)
+                size += len(block)
+    return {"size": size, "sha256": digest.hexdigest()}
 
 
 @dataclass
@@ -65,6 +92,7 @@ class Project:
     view: dict = field(default_factory=dict)
     plan: dict | None = None
     imagery_offset: list[float] | None = None
+    source_fingerprints: dict[str, dict] = field(default_factory=dict)
     version: int = VERSION
     path: Path | None = None
 
@@ -83,6 +111,8 @@ class Project:
             "view": dict(self.view),
             "plan": self.plan,
             "imagery_offset": self.imagery_offset,
+            "source_fingerprints": {_store_path(s, base): dict(fp) for s, fp
+                                    in self.source_fingerprints.items()},
         }
 
     @classmethod
@@ -103,6 +133,9 @@ class Project:
             view=dict(d.get("view") or {}),
             plan=d.get("plan") or None,
             imagery_offset=d.get("imagery_offset") or None,
+            source_fingerprints={
+                _resolve_path(s, base): dict(fp) for s, fp
+                in (d.get("source_fingerprints") or {}).items()},
             version=version,
         )
 

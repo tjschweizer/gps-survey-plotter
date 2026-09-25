@@ -409,3 +409,63 @@ def test_a_hand_typed_shift_carries_no_statistics(stubbed):
     assert off.de == pytest.approx(0.3048)
     assert off.dn == pytest.approx(-0.1524)
     assert off.n == 0 and "by hand" in off.describe()
+
+
+# --- source fingerprints ------------------------------------------------------
+
+def test_a_renamed_copy_is_refused_as_already_loaded(synthetic_zip, tmp_path):
+    """Duplicates were detected by path only, so a renamed copy merged as
+    new data and doubled every point."""
+    import shutil
+
+    st = AppState(site=example_site(), cache_dir=tmp_path / "cache")
+    st.load(synthetic_zip)
+    copy = tmp_path / "Synthetic Yard (1).zip"
+    shutil.copy(synthetic_zip, copy)
+    before = len(st.layers["track_points"])
+    with pytest.raises(ValueError, match="same contents as Synthetic Yard.zip"):
+        st.add_export(copy)
+    assert len(st.layers["track_points"]) == before
+
+
+def test_fingerprints_are_saved_with_the_project(stubbed, tmp_path):
+    saved = stubbed.save_project(tmp_path / "fp.yardproj")
+    stored = json.loads(saved.read_text("utf-8"))["source_fingerprints"]
+    (entry,) = stored.values()
+    assert entry["size"] == stubbed.sources[0].stat().st_size
+    assert len(entry["sha256"]) == 64
+
+
+def test_a_source_changed_since_saving_is_warned_about(synthetic_zip, tmp_path):
+    """The stored offsets are re-applied, not re-solved; a file re-exported
+    under the same name would receive them silently."""
+    import shutil
+
+    from synthetic import write_export
+
+    source = tmp_path / "Synthetic Yard.zip"
+    shutil.copy(synthetic_zip, source)
+    st = AppState(site=example_site(), cache_dir=tmp_path / "cache")
+    st.load(source)
+    st.solve_vertical("local")
+    saved = st.save_project(tmp_path / "changed.yardproj")
+
+    write_export(source, dz=0.02, seed=5)             # re-exported, same name
+    _, _, warnings = _reopen(st, saved)
+    assert any("has changed since the project was saved" in w for w in warnings)
+
+
+def test_an_unchanged_source_is_not_warned_about(stubbed, tmp_path):
+    saved = stubbed.save_project(tmp_path / "same.yardproj")
+    _, _, warnings = _reopen(stubbed, saved)
+    assert not warnings
+
+
+def test_a_project_without_fingerprints_still_opens(stubbed, tmp_path):
+    saved = stubbed.save_project(tmp_path / "old.yardproj")
+    d = json.loads(saved.read_text("utf-8"))
+    del d["source_fingerprints"]
+    saved.write_text(json.dumps(d), "utf-8")
+    other, project, warnings = _reopen(stubbed, saved)
+    assert project.source_fingerprints == {} and not warnings
+    assert other.fingerprints

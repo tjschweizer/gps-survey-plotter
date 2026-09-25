@@ -144,6 +144,11 @@ class AppState:
         # project is routinely more than one outing, and the vertical model
         # exists precisely because those outings disagree.
         self.sources: list[Path] = []
+        # What each source held when it was loaded, by its path. A renamed
+        # copy is the same data and must not merge in twice; a re-exported
+        # file under an old name is different data and must not silently
+        # inherit the offsets solved for the old one.
+        self.fingerprints: dict[str, dict] = {}
         self.project_path: Path | None = None
         self.plan = Plan()
 
@@ -192,12 +197,27 @@ class AppState:
         sessions that no longer exists, and re-applying it to new data would
         put the new points on a datum nothing measured.
         """
+        from ..project import fingerprint
+
         path = Path(path)
         if merge and any(p.resolve() == path.resolve() for p in self.sources):
             raise ValueError(
                 f"{path.name} is already loaded. Adding it twice would double "
                 "every point in it and make the duplicates look like a "
                 "perfect crossover.")
+        if not path.exists():
+            raise FileNotFoundError(path)
+        fp = fingerprint(path)
+        if merge:
+            twin = next((p for p in self.sources
+                         if self.fingerprints.get(str(p), {}).get("sha256")
+                         == fp["sha256"]), None)
+            if twin is not None:
+                raise ValueError(
+                    f"{path.name} has exactly the same contents as "
+                    f"{twin.name}, which is already loaded - a renamed copy. "
+                    "Adding it would double every point in it and make the "
+                    "duplicates look like a perfect crossover.")
 
         exp = read_any(path)
         # Refuse before touching anything. A CSV that is not a survey reads
@@ -221,6 +241,7 @@ class AppState:
             if plan_layer is not None:
                 self.layers[self.PLAN_LAYER] = plan_layer
             self.sources.append(path)
+            self.fingerprints[str(path)] = fp
             if self.vertical is not None:
                 self.vertical = None
                 report.notes.append(
@@ -230,6 +251,7 @@ class AppState:
             self.layers = dict(incoming)
             self.visible = {}
             self.sources = [path]
+            self.fingerprints = {str(path): fp}
             self.hidden_sessions = set()
             self.vertical = None
             report.layers = {k: (0, len(v)) for k, v in incoming.items()}
@@ -667,6 +689,9 @@ class AppState:
                   if self.plan.points or self.plan.setups else None),
             imagery_offset=(self.imagery_offset.to_list()
                             if not self.imagery_offset.zero else None),
+            source_fingerprints={str(p): self.fingerprints[str(p)]
+                                 for p in self.sources
+                                 if str(p) in self.fingerprints},
         )
 
     def save_project(self, path: str | Path, view: dict | None = None) -> Path:
@@ -716,6 +741,15 @@ class AppState:
                 warnings += loaded.notes
             except Exception as exc:                      # noqa: BLE001
                 warnings.append(f"could not load {Path(src).name}: {exc}"[:160])
+                continue
+            saved = project.source_fingerprints.get(src)
+            now = self.fingerprints.get(str(Path(src)))
+            if saved and now and saved.get("sha256") != now["sha256"]:
+                warnings.append(
+                    f"{Path(src).name} has changed since the project was "
+                    "saved. The stored session offsets and datum were solved "
+                    "from its old contents and are applied to the new ones "
+                    "as they are; re-solve from the Datum menu.")
 
         self.hidden_sessions = set(map(str, project.view.get("hidden_sessions", [])))
         self.surface_from_shown = bool(project.view.get("surface_from_shown_sessions", False))

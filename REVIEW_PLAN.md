@@ -103,6 +103,7 @@ These were set by the owner and apply to every item.
 | After O1 | 367 passed, 51 skipped, 40 deselected | 35 passed |
 | After O2 | 370 passed, 51 skipped, 40 deselected | 35 passed |
 | After O3, C3 | 376 passed, 51 skipped, 40 deselected | 35 passed |
+| After A6 | 381 passed, 51 skipped, 40 deselected | 35 passed |
 
 Of the 55 skips, 50 need real data. The other 5 are network tests that the
 sandbox proxy refused.
@@ -170,8 +171,8 @@ These answers change the designs in section 5.
 | 12 | O1 | Session offsets from cell differences | processing | ✅ `42425eb` |
 | 13 | O2 | Compute crossovers and slope once | code health | ✅ `1a20e3b` |
 | 14 | O3 | Filter-chain cache keyed by a token | code health | ✅ `e03aedc` |
-| 15 | C3 | Heights labelled by vertical model | processing | ✅ |
-| 16 | A6 | Source fingerprints | code health | todo |
+| 15 | C3 | Heights labelled by vertical model | processing | ✅ `6a8f32f` |
+| 16 | A6 | Source fingerprints | code health | ✅ |
 | 17 | A2 | Fill plan shots from SW Maps records by station | workflow | todo |
 | 18 | A4 | Per-setup level closure and laser check | workflow | todo |
 | 19 | A3 | Control marks and start/end check shots | workflow | todo (**format v3**) |
@@ -667,7 +668,20 @@ follow it in SW Maps:
   name means the same physical point.
 - Everything else can keep SW Maps' own ID.
 
-**A6 — Source fingerprints**
+**A6 — Source fingerprints** ✅
+- **Done:** `project.fingerprint(path)` → `{size, sha256}` (a folder of CSVs
+  is hashed file by file in name order). `Project.source_fingerprints`,
+  keyed by source path and stored relative like `sources`; an optional key,
+  no format bump. `AppState.fingerprints` is filled at every load;
+  `load(merge=True)` refuses content identical to a loaded source ("has
+  exactly the same contents as X ... a renamed copy") before reading it;
+  `to_project` writes the fingerprints; `load_project` warns when a
+  source's hash differs from the stored one. Tests in `test_project.py`:
+  `test_a_renamed_copy_is_refused_as_already_loaded` (E7),
+  `test_fingerprints_are_saved_with_the_project`,
+  `test_a_source_changed_since_saving_is_warned_about`,
+  `test_an_unchanged_source_is_not_warned_about`,
+  `test_a_project_without_fingerprints_still_opens`.
 - **What:**
   - `project.py`: new optional key `source_fingerprints` holding
     `{path: {size, sha256}}`. Older builds ignore unknown top-level keys
