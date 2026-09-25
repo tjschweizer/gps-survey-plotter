@@ -131,4 +131,13 @@ module top.
   perimeter at 1 ft and 10 ft, curb flowline.
 - Investigate PPK: LG290P can emit its own observations as RTCM3 MSM. RTKLIB
   combined forward/backward with RTS smoothing should convert some float to fixed.
-- Possible ArduPilot rover to automate acquisition on repeatable transects.
+- Rover to automate acquisition on repeatable transects: a PX4 build with a
+  Cube Orange, a Raspberry Pi 5 and the LG290P with the ANN-MB2, taking RTK
+  corrections through QGroundControl's NTRIP client.
+- Deferred (A9 in `REVIEW_PLAN.md`): Export ▸ "Rover mission", writing plan
+  lines and tie transects as a QGroundControl `.plan` (JSON, WGS84
+  waypoints, cruise speed) from a new `io/mission.py`. Waiting on what the
+  rover will log (PX4 ulog, NMEA from the Pi, or SW Maps on a phone), which
+  decides whether an import path follows; reading ulog would need a new
+  dependency, so ask first. `*.plan` carries lat/lon and must be added to
+  .gitignore with it.

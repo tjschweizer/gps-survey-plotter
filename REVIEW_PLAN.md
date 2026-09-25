@@ -222,8 +222,8 @@ These answers change the designs in section 5.
 | 39 | C27 | Atomic saves | code health | ✅ `aedcc88` |
 | 40 | C28 | Server hardening | code health | ✅ `ef50afd` |
 | 41 | C30 | Hide the do-nothing surface-residual stage | code health | ✅ `8b8804d` |
-| 42 | C31 | Network tests stay off under any `-m` | code health | ✅ |
-| 43 | C32 | CLAUDE.md: rover is PX4, plus the A9 note | docs | todo |
+| 42 | C31 | Network tests stay off under any `-m` | code health | ✅ `0970ee9` |
+| 43 | C32 | CLAUDE.md: rover is PX4, plus the A9 note | docs | ✅ |
 | — | A9 | Rover mission export | workflow | **deferred** (section 7) |
 
 The order follows dependencies, then puts workflow and UI ahead of anything
@@ -1346,7 +1346,12 @@ Evidence for these is in the review screenshots: synthetic export,
 - **Why:** R24.
 - **Breaking?:** no.
 
-**C32 — CLAUDE.md: rover is PX4, plus the A9 note**
+**C32 — CLAUDE.md: rover is PX4, plus the A9 note** ✅
+- **Done:** "Open work" now describes the PX4 rover (Cube Orange, Raspberry
+  Pi 5, LG290P with ANN-MB2, RTK through QGroundControl's NTRIP client) in
+  place of "Possible ArduPilot rover…", and carries the deferred A9 note
+  (what it would do, what it waits on, the ulog dependency question, and
+  `*.plan` in .gitignore). Doc only.
 - **What:** in "Open work", replace "Possible ArduPilot rover…" with the PX4
   build: Cube Orange, Raspberry Pi 5, LG290P with ANN-MB2, RTK corrections
   through QGroundControl's NTRIP client. Add the deferred A9 note (section 7).
