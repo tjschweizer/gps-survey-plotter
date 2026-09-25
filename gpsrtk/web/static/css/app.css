@@ -271,17 +271,21 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); margi
 #tabs button[aria-selected="true"] { background: var(--panel); border-color: var(--border); font-weight: 600; }
 .view { display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 0; min-width: 0; position: relative; }
 #view-plan { grid-template-rows: auto auto auto minmax(0, 1fr); }
+/* Exactly one line, always there: a strip that appeared, vanished or wrapped
+   would resize the map under the pointer mid-drag. */
 .strip {
   display: flex;
-  flex-wrap: wrap;
-  gap: 4px 14px;
+  gap: 14px;
   padding: 3px 8px;
+  height: 22px;
+  line-height: 16px;
   border-bottom: 1px solid var(--border);
   background: var(--panel);
   font-size: 12px;
   min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
 }
-.strip:empty { display: none; }
 .strip .seg { white-space: nowrap; }
 .strip .seg.warn { color: var(--warn); font-weight: 600; }
 .strip .seg.ok { color: var(--ok); }
