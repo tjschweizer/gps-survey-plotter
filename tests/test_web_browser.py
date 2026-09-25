@@ -937,3 +937,21 @@ def test_an_empty_page_offers_a_way_in(browser, synthetic_zip, tmp_path):
         context.close()
         server.should_exit = True
         thread.join(10)
+
+
+def test_the_page_runs_clean_under_its_content_security_policy(browser, live):
+    """No CSP violation on load, in the plan view or the 3D view."""
+    _reset(live)
+    context = browser.new_context(viewport={"width": 1500, "height": 900})
+    pg = context.new_page()
+    violations = []
+    pg.on("console", lambda m: "Content Security Policy" in m.text and violations.append(m.text))
+    try:
+        pg.goto(live.url)
+        pg.wait_for_function("() => window.yardsurvey.store.state?.has_data")
+        pg.click("#tabs button[data-tab='3d']")
+        pg.wait_for_selector("#plot3d .main-svg", timeout=20000)
+        pg.wait_for_timeout(500)
+        assert not violations, violations
+    finally:
+        context.close()

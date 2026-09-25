@@ -107,8 +107,35 @@ def test_actions_from_another_origin_are_refused(client):
 
 def test_actions_from_its_own_page_are_accepted(client):
     r = client.post("/api/vertical/clear", json={},
-                    headers={"Origin": "http://127.0.0.1:8765"})
+                    headers={"Origin": "http://127.0.0.1"})
     assert r.status_code == 200
+
+
+def test_another_port_on_this_machine_is_a_foreign_origin(client, app):
+    """Only the host name was compared, so any other local server's page
+    could drive this one."""
+    r = client.post("/api/vertical/clear", json={},
+                    headers={"Origin": "http://127.0.0.1:8080"})
+    assert r.status_code == 403
+    r = client.post("/api/vertical/clear", json={},
+                    headers={"Origin": "https://127.0.0.1"})
+    assert r.status_code == 403
+    here = TestClient(app, base_url="http://127.0.0.1:8765", headers=ACTION)
+    r = here.post("/api/vertical/clear", json={},
+                  headers={"Origin": "http://127.0.0.1:8765"})
+    assert r.status_code == 200
+
+
+def test_the_page_and_its_downloads_carry_security_headers(client):
+    page = client.get("/")
+    assert "script-src 'self'" in page.headers["content-security-policy"]
+    assert page.headers["x-content-type-options"] == "nosniff"
+    assert client.get("/api/state").headers["x-content-type-options"] == "nosniff"
+    post(client, "/api/plan/point/add", {"x": 12.0, "y": 15.0})
+    url = post(client, "/api/plan/fieldsheet")["download"]["url"]
+    sheet = client.get(url)
+    assert sheet.headers["content-security-policy"] == \
+        "default-src 'none'; style-src 'unsafe-inline'; img-src data:"
 
 
 def test_a_foreign_host_name_is_refused(app):

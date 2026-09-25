@@ -126,6 +126,7 @@ These were set by the owner and apply to every item.
 | After C10 | 428 passed, 51 skipped, 56 deselected | — |
 | After C24 | 429 passed, 51 skipped, 56 deselected | — |
 | After C27 | 431 passed, 51 skipped, 56 deselected | — |
+| After C28 | 433 passed, 51 skipped, 57 deselected | 52 passed |
 
 Of the 55 skips, 50 need real data. The other 5 are network tests that the
 sandbox proxy refused.
@@ -217,8 +218,8 @@ These answers change the designs in section 5.
 | 36 | C10 | World file on the grid | processing | ✅ `2143862` |
 | 37 | C24 | Surface smoothing sized in metres | processing | ✅ `116824f` |
 | 38 | C26 | .gitignore covers exports | code health | ✅ `757b32b` |
-| 39 | C27 | Atomic saves | code health | ✅ |
-| 40 | C28 | Server hardening | code health | todo |
+| 39 | C27 | Atomic saves | code health | ✅ `aedcc88` |
+| 40 | C28 | Server hardening | code health | ✅ |
 | 41 | C30 | Hide the do-nothing surface-residual stage | code health | todo |
 | 42 | C31 | Network tests stay off under any `-m` | code health | todo |
 | 43 | C32 | CLAUDE.md: rover is PX4, plus the A9 note | docs | todo |
@@ -1293,7 +1294,22 @@ Evidence for these is in the review screenshots: synthetic export,
 - **Verify:** test.
 - **Breaking?:** no.
 
-**C28 — Server hardening**
+**C28 — Server hardening** ✅
+- **Done:** actions compare the whole Origin (scheme, host name, port, with
+  default ports filled in) against the request's own scheme and Host, and
+  the host name must still be loopback. Every response gets
+  `X-Content-Type-Options: nosniff`; the page gets `PAGE_CSP` (`default-src
+  'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src
+  'self' data: blob:; worker-src 'self' blob:; connect-src 'self';
+  object-src 'none'; base-uri 'none'; frame-ancestors 'none'`); downloaded
+  HTML (the field sheet) gets `default-src 'none'; style-src
+  'unsafe-inline'; img-src data:`. Plotly's 3D bundle turned out not to
+  need `'unsafe-eval'`: it renders with no violation logged. Tests:
+  `test_web_api.py::test_another_port_on_this_machine_is_a_foreign_origin`,
+  `::test_the_page_and_its_downloads_carry_security_headers`
+  (`test_actions_from_its_own_page_are_accepted` now sends the origin the
+  test client really is, `http://127.0.0.1`),
+  `test_web_browser.py::test_the_page_runs_clean_under_its_content_security_policy`.
 - **What:** compare the full Origin (scheme, host and port) against the
   request's host, not just the hostname (`server.py:309`). Add:
   - a `Content-Security-Policy` on the page (`script-src 'self'`). Plotly's

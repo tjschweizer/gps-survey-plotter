@@ -71,6 +71,17 @@ ACTION_HEADER = "x-yard-survey"
 DEFAULT_PORT = 8765
 MAX_DOWNLOADS = 20
 
+# The page runs only its own scripts and fetches nothing from off this
+# machine. (Plotly's 3D bundle was expected to need 'unsafe-eval'; it renders
+# without it, with no violation reported - tested in the browser suite.)
+PAGE_CSP = ("default-src 'self'; script-src 'self'; "
+            "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
+            "worker-src 'self' blob:; connect-src 'self'; object-src 'none'; "
+            "base-uri 'none'; frame-ancestors 'none'")
+# A downloaded page (the field sheet) is self-contained: inline styles and
+# an inlined PNG, and nothing else - no scripts, no requests.
+DOWNLOAD_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:"
+
 EXPORT_TYPES = [".zip", ".swmz", ".swm2", ".csv"]
 RASTER_TYPES = [".tif", ".tiff", ".png", ".jpg"]
 
@@ -308,12 +319,26 @@ def create_app(state: AppState | None = None, *, vector_providers=None,
                        allowed_hosts=allowed_hosts or LOOPBACK)
 
     hosts = set(allowed_hosts or LOOPBACK)
+    default_port = {"http": 80, "https": 443}
+
+    def same_origin(origin: str, request: Request) -> bool:
+        """The whole origin - scheme, host AND port - is this server's own.
+
+        Comparing the host name alone let any other local server's page
+        (127.0.0.1 on another port) through.
+        """
+        o = urlparse(origin)
+        here = urlparse(f"{request.url.scheme}://{request.headers.get('host', '')}")
+        return (o.hostname in hosts and o.scheme == here.scheme
+                and o.hostname == here.hostname
+                and (o.port or default_port.get(o.scheme))
+                == (here.port or default_port.get(here.scheme)))
 
     @app.middleware("http")
     async def same_origin_actions(request: Request, call_next):
         if request.method not in ("GET", "HEAD"):
             origin = request.headers.get("origin")
-            foreign = origin and urlparse(origin).hostname not in hosts
+            foreign = origin and not same_origin(origin, request)
             if foreign or request.headers.get(ACTION_HEADER) != "1":
                 return _json({"error": notice(
                     "Refused", "Actions are only accepted from this "
@@ -328,6 +353,10 @@ def create_app(state: AppState | None = None, *, vector_providers=None,
         path = request.url.path
         if path == "/" or path.startswith("/static/"):
             response.headers["Cache-Control"] = "no-cache"
+        # Every response is what it says it is, never sniffed into another.
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        if path == "/":
+            response.headers["Content-Security-Policy"] = PAGE_CSP
         return response
 
     @app.exception_handler(UserError)
@@ -439,8 +468,10 @@ def create_app(state: AppState | None = None, *, vector_providers=None,
                             status_code=404, media_type="text/plain")
         filename, data, media_type, inline = item
         disposition = "inline" if inline else "attachment"
-        return Response(data, media_type=media_type, headers={
-            "Content-Disposition": f'{disposition}; filename="{filename}"'})
+        headers = {"Content-Disposition": f'{disposition}; filename="{filename}"'}
+        if media_type.startswith("text/html"):
+            headers["Content-Security-Policy"] = DOWNLOAD_CSP
+        return Response(data, media_type=media_type, headers=headers)
 
     @app.get("/api/files")
     def get_files(dir: str = "", exts: str = ""):
