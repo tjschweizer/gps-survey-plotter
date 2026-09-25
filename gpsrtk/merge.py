@@ -57,9 +57,13 @@ class SessionInfo:
 
     @property
     def date(self) -> str:
-        """The session's calendar date, which is how sessions are labelled."""
+        """The date the session started, from its label.
+
+        A later session on the same day is labelled "YYYY-MM-DD HH:MM", so
+        the date is the first ten characters.
+        """
         tail = self.name.rsplit("/", 1)[-1]
-        return tail if tail[:2].isdigit() else ""
+        return tail[:10] if tail[:2].isdigit() else ""
 
     @property
     def fixed_fraction(self) -> float:

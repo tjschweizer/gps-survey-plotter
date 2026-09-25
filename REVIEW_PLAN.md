@@ -98,6 +98,7 @@ These were set by the owner and apply to every item.
 | After C7 | 335 passed, 51 skipped, 40 deselected | 35 passed |
 | After C1 | 337 passed, 51 skipped, 40 deselected | — |
 | After C2 | 354 passed, 51 skipped, 40 deselected | 35 passed |
+| After C25 | 363 passed, 51 skipped, 40 deselected | 35 passed |
 
 Of the 55 skips, 50 need real data. The other 5 are network tests that the
 sandbox proxy refused.
@@ -111,6 +112,12 @@ browser tests ran against the installed Chrome, with
 `YARDSURVEY_CHROMIUM=C:/Program Files/Google/Chrome/Application/chrome.exe`,
 so no Playwright download was needed. Git has no identity configured there;
 commits pass `-c user.name=Claude -c user.email=noreply@anthropic.com`.
+
+The venv holds a regular (non-editable) install of `gpsrtk`, so `uv run`
+rebuilds and reinstalls it whenever the source changes. When the owner has
+`yardsurvey` running, its launcher `.exe` is locked and that reinstall
+fails. Run the tests against the working tree instead:
+`PYTHONPATH=<repo> uv run --no-sync pytest ...`.
 
 ---
 
@@ -153,8 +160,8 @@ These answers change the designs in section 5.
 | 6 | C12 | Instrument height guard | processing | ✅ `5ca29f2` |
 | 7 | C7 | Rod entry guard: feet, inches and fractions | workflow | ✅ `2fd6e47` |
 | 8 | C1 | Every rod shot joins the level network | processing | ✅ `0cc6dc4` |
-| 9 | C2 | Station identities: plan shots vs SW Maps records | processing | ✅ (**meaning changed**) |
-| 10 | C25 | Split sessions where the data proves a mount change | processing | todo (**session names change**) |
+| 9 | C2 | Station identities: plan shots vs SW Maps records | processing | ✅ `37b38bb` (**meaning changed**) |
+| 10 | C25 | Split sessions where the data proves a mount change | processing | ✅ (**session names change**) |
 | 11 | C6 | One overlap definition for the merge report and the solve | processing | todo |
 | 12 | O1 | Session offsets from cell differences | processing | todo |
 | 13 | O2 | Compute crossovers and slope once | code health | todo |
@@ -404,6 +411,31 @@ canonical `STATION = "station"` in `model/pointset.py`).
 
 **C25 — Split sessions where the data proves a mount change** (session names
 change; approved)
+
+✅ *Done.* New module `gpsrtk/sessions_split.py` (`split_sessions`), called
+by `io/swmaps.py` `assign_sessions`; the `.swmz` reader now assigns sessions
+per layer, as the CSV export's files already were. `SessionInfo.date` reads
+the first ten characters. Two decisions beyond the design, both recorded in
+the module docstring:
+- **Hard split at gaps ≥ 6 h** (`OUTING_GAP_S`). The owner chose this on
+  2026-09-24 when asked: under the literal design a later outing in the
+  same export that shares no ground with the earlier one would have merged
+  silently into its session. Now it is its own session and, if it overlaps
+  nothing, the merge report says so. That is true, not invented.
+- **Where a proven split lands.** A block with too few cells to test (for
+  example a partial pass right after the pause) stays with the session; when
+  a later block proves a step, the new session starts at the longest pause
+  since the last block proven to be on the old mount. Without this, the
+  first few points on the new mount carried the old offset: a whole-step
+  spike.
+
+Evidence is RTK-fixed heights only (float would invent steps). Tests: new
+`tests/test_sessions_split.py` (mount change after a 4 min pause, a bag
+pause, past midnight, unprovable block, 6 h outing, next day's name, float
+is not evidence, `SessionInfo.date`, rows with no time). Split costs about
+55 ms per layer on the synthetic export. **Needs a local real-data run:**
+`test_merge.py::test_the_two_real_formats_merge` expects 3 sessions; report
+the new count rather than guessing.
 
 *Owner's answer:* mounts change within a day, and logging runs past midnight.
 

@@ -343,7 +343,10 @@ def _finish(points: pd.DataFrame, labels: dict, attrs: pd.DataFrame,
 
     df[E], df[N] = _project(df[LAT], df[LON])
     df[SOURCE] = source
-    df[SESSION] = assign_sessions(df, stem)
+    # Per layer, as the CSV export's files are: a shot recorded mid-track is
+    # not a break in the track's session.
+    df[SESSION] = pd.concat([assign_sessions(part, stem)
+                             for _, part in df.groupby("_layer", sort=False)])
 
     drop = [c for c in ("fid", "snap_id", "additional_data", "start_time")
             if c in df.columns]

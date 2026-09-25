@@ -83,18 +83,19 @@ def assign_sessions(df: pd.DataFrame, prefix: str) -> pd.Series:
 
     A session is one continuous outing, which is the granularity at which the
     vertical offset is constant: the antenna was mounted once, the base was
-    selected once, the rod was measured once. The acquisition date is the
-    practical proxy. The export name is kept as a prefix so two properties, or
-    two exports made on the same day, do not collide.
+    selected once, the rod was measured once. The export name is kept as a
+    prefix so two properties, or two exports made on the same day, do not
+    collide.
 
     Getting this granularity right matters: labelling a whole export as one
     session would hide a genuine offset between visits, and labelling every
-    track separately would invent offsets that do not exist.
+    track separately would invent offsets that do not exist. So a session is
+    split only where the data proves a step, or at a gap long enough to be a
+    separate outing - see `sessions_split`.
     """
-    if TIME in df.columns and df[TIME].notna().any():
-        dates = df[TIME].dt.strftime("%Y-%m-%d")
-        return (prefix + "/" + dates).fillna(prefix)
-    return pd.Series([prefix] * len(df), index=df.index)
+    from ..sessions_split import split_sessions
+
+    return split_sessions(df, prefix)
 
 
 def normalise(raw: pd.DataFrame, source: str, session: str) -> pd.DataFrame:
