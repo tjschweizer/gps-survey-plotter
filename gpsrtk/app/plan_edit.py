@@ -26,7 +26,7 @@ import math
 
 from ..plan import (PURPOSES, SIGMA_M, Plan, PlanLine, PlannedPoint,
                     PlannedSetup, Tie, purpose_group)
-from ..units import ft_to_m, m_to_ft
+from ..units import ft_to_m, m_to_ft, parse_rod
 
 NAVIGATE, ADD_POINT, ADD_LINE, ADD_SETUP = ("navigate", "add_point",
                                             "add_line", "add_setup")
@@ -61,6 +61,12 @@ FAR_M = 500.0
 MIN_LEADER_M = 0.15
 
 FIXED_WORDS = ("y", "yes", "1", "true", "x", "fixed")
+
+# Rod readings outside this range are allowed but asked about. Under a foot
+# is most often feet typed as inches ("5.26"); over 200 in is past the top of
+# most rods.
+ROD_LOW_IN = 12.0
+ROD_HIGH_IN = 200.0
 
 
 class PlanEditError(ValueError):
@@ -164,7 +170,8 @@ def setup_choices(plan: Plan) -> list[str]:
 
 # --- the readings table ----------------------------------------------------------
 
-def edit_cell(plan: Plan, number: int, field: str, text) -> None:
+def edit_cell(plan: Plan, number: int, field: str, text, *,
+              confirm: bool = False) -> None:
     """Apply one edited table cell."""
     point = _point(plan, number)
     text = "" if text is None else str(text).strip()
@@ -174,10 +181,26 @@ def edit_cell(plan: Plan, number: int, field: str, text) -> None:
             point.rod_in = None
             return
         try:
-            point.rod_in = float(text)
-        except ValueError:
-            raise PlanEditError("Rod reading",
-                                f"'{text}' is not a number of inches.") from None
+            inches = parse_rod(text)
+        except ValueError as exc:
+            raise PlanEditError(
+                "Rod reading",
+                f"{_message(exc)[:1].upper()}{_message(exc)[1:]}.\n\nWrite "
+                "inches (63 1/4), feet and inches (5' 3 1/4\") or a grade "
+                "rod reading (5-3-1/4).") from None
+        if inches < ROD_LOW_IN and not confirm:
+            raise NeedsConfirmation(
+                "Rod reading",
+                f"'{text}' reads as {inches:g} inches - less than a foot.\n\n"
+                "Did you mean feet? A bare number is inches; feet need a "
+                f"unit, as in {text} ft or 5' 3 1/4\". Use {inches:g} in anyway?")
+        if inches > ROD_HIGH_IN and not confirm:
+            raise NeedsConfirmation(
+                "Rod reading",
+                f"'{text}' reads as {inches:g} inches "
+                f"({inches / 12:.2f} ft), which is longer than "
+                "most rods. Use it anyway?")
+        point.rod_in = inches
     elif field == "fix":
         # Only a FIXED solution is worth taking over the planned position;
         # a float fix is worse than the click, so anything else clears it.

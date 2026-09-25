@@ -324,6 +324,17 @@ def test_a_refused_plan_edit_is_a_warning_with_its_own_title(client):
     assert error["title"] == "Rod reading" and error["level"] == "warning"
 
 
+def test_a_rod_reading_under_a_foot_is_confirmed_first(client, state):
+    post(client, "/api/plan/point/add", {"x": 12.0, "y": 15.0})
+    reply = post(client, "/api/plan/cell",
+                 {"number": 1, "field": "rod", "value": "5.26"})
+    assert reply["confirm"]["title"] == "Rod reading"
+    assert state.plan.by_number(1).rod_in is None
+    post(client, "/api/plan/cell",
+         {"number": 1, "field": "rod", "value": "5.26", "confirm": True})
+    assert state.plan.by_number(1).rod_in == pytest.approx(5.26)
+
+
 def test_a_bulk_delete_asks_and_only_then_deletes(client, state):
     for x in (10.0, 12.0, 14.0):
         post(client, "/api/plan/point/add", {"x": x, "y": 15.0})

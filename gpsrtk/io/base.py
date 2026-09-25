@@ -113,6 +113,24 @@ def normalise_kind(s: pd.Series) -> pd.Series:
     return s.map(lambda v: v.strip().lower() if isinstance(v, str) else v)
 
 
+def rod_readings(s: pd.Series) -> pd.Series:
+    """Rod readings in inches, from numbers or from text as written.
+
+    A text attribute such as "63 1/4" or "5-3-1/4" used to go through
+    `numeric`, which turned it into NaN and silently dropped the reading.
+    Anything `units.parse_rod` refuses is still NaN.
+    """
+    from ..units import parse_rod
+
+    def one(value):
+        try:
+            return parse_rod(value)
+        except (TypeError, ValueError):
+            return float("nan")
+
+    return s.map(one).astype(float)
+
+
 def numeric(df: pd.DataFrame, cols) -> None:
     """Coerce columns to numeric in place, leaving unparseable values as NaN."""
     for c in cols:

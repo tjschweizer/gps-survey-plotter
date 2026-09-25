@@ -250,6 +250,31 @@ def test_the_type_attribute_is_normalised(tmp_path):
     assert list(kinds[:4]) == ["lawn", "lawn", "lawn", "bldg"]
 
 
+def test_a_rod_reading_written_as_text_is_read(tmp_path):
+    """SW Maps' number field pushed readings into text such as "63 1/4",
+    which used to become NaN and silently drop out of the level network."""
+    import zipfile
+
+    from synthetic import spot_rows, track_points
+
+    from gpsrtk.io import read_any
+
+    spots = spot_rows()
+    spots["height number"] = spots["height number"].astype(object)
+    spots.loc[0, "height number"] = "63 1/4"
+    spots.loc[1, "height number"] = "5' 3 1/4\""
+    spots.loc[2, "height number"] = "5-3-1/4"
+    spots.loc[3, "height number"] = "forty"
+    path = tmp_path / "Rods.zip"
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("Rods_TRACK_POINTS.csv", track_points().head(50).to_csv(index=False))
+        z.writestr("Rods_spots.csv", spots.to_csv(index=False))
+    rods = read_any(path)["spots"].df[P.ROD_IN]
+    assert list(rods[:3]) == pytest.approx([63.25] * 3)
+    assert np.isnan(rods[3])
+    assert rods[4] == pytest.approx(spot_rows()["height number"][4])
+
+
 def _export_with_instrument_ht(path, heights):
     import zipfile
 

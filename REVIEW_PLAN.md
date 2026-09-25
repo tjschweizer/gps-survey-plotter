@@ -50,7 +50,9 @@ These were set by the owner and apply to every item.
   existing files load. The owner approved A3, C2 and C25 knowing each needs
   this. Still say so plainly when you commit them.
 - Editing CLAUDE.md or README.md beyond what an approved item states.
-- Any push, pull request or merge.
+- Any push, pull request or merge. (Update, 2026-09-24: the owner has since
+  allowed pushing `main` to `origin` directly. Pull requests and merges still
+  need asking.)
 - A test that still fails after two fix attempts. Stop and report rather than
   looping.
 
@@ -93,6 +95,7 @@ These were set by the owner and apply to every item.
 | After C8 | 287 passed, 50 skipped, 40 deselected | — |
 | After C11 | 288 passed, 51 skipped (+1: `tzset` test on Windows), 40 deselected | — |
 | After C12 | 292 passed, 51 skipped, 40 deselected | — |
+| After C7 | 335 passed, 51 skipped, 40 deselected | 35 passed |
 
 Of the 55 skips, 50 need real data. The other 5 are network tests that the
 sandbox proxy refused.
@@ -145,8 +148,8 @@ These answers change the designs in section 5.
 | 3 | C9 | Layer names come from the files inside the export | code health | ✅ `02a7c76` |
 | 4 | C8 | Normalise the `type` attribute | processing | ✅ `ae4c254` |
 | 5 | C11 | Correct daylight-saving times for `.swmz` | processing | ✅ `731a4e4` |
-| 6 | C12 | Instrument height guard | processing | ✅ |
-| 7 | C7 | Rod entry guard: feet, inches and fractions | workflow | todo |
+| 6 | C12 | Instrument height guard | processing | ✅ `5ca29f2` |
+| 7 | C7 | Rod entry guard: feet, inches and fractions | workflow | ✅ |
 | 8 | C1 | Every rod shot joins the level network | processing | todo |
 | 9 | C2 | Station identities: plan shots vs SW Maps records | processing | todo (**format/meaning**) |
 | 10 | C25 | Split sessions where the data proves a mount change | processing | todo (**session names change**) |
@@ -278,7 +281,19 @@ the review session's scratchpad.
   warning.
 - **Breaking?:** no.
 
-**C7 — Rod entry guard: feet, inches and fractions**
+**C7 — Rod entry guard: feet, inches and fractions** ✅
+- **Done:** `units.parse_rod`, used by `plan_edit.edit_cell` (which gained
+  `confirm=`; `/api/plan/cell` passes it through, and the page's existing
+  confirm-and-resend path needed no change) and by both readers through
+  `io/base.py` `rod_readings`, which leaves a refused value as NaN. `5-3`
+  (no fraction) is read as 5 ft 3 in, consistent with `5-3-1/4`; `63-1/4`
+  is inches because its second part is a fraction. Unicode primes and
+  vulgar fractions (¼, ½, ...) are accepted. Tests: new
+  `tests/test_units.py`; `test_plan_edit.py` rod tests (the "not a number
+  of inches" wording became "not a rod reading");
+  `test_web_api.py::test_a_rod_reading_under_a_foot_is_confirmed_first`;
+  `test_merge.py::test_a_rod_reading_written_as_text_is_read`;
+  `test_swmz.py::test_a_rod_reading_in_feet_and_inches_is_read`.
 - **What:** one parser, `units.parse_rod(text) -> inches`, used by the plan
   table (`app/plan_edit.py:177`). It must accept:
   - `63`, `63.25`, `63 1/4`, `63-1/4`;

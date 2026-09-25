@@ -33,7 +33,7 @@ from ..model.pointset import (
     TRACK, SOURCE, SESSION,
 )
 from .base import (SurveyExport, SurveyReader, register_reader, normalise_kind,
-                   numeric, parse_time)
+                   numeric, parse_time, rod_readings)
 
 # export column -> canonical name
 ALIASES = {
@@ -105,6 +105,8 @@ def normalise(raw: pd.DataFrame, source: str, session: str) -> pd.DataFrame:
     if TIME in df.columns:
         df[TIME], df[TZ] = parse_time(df[TIME])
 
+    if ROD_IN in df.columns:
+        df[ROD_IN] = rod_readings(df[ROD_IN])
     numeric(df, NUMERIC_COLS)
     if "point_id" in df.columns:
         df["point_id"] = df["point_id"].astype("Int64")

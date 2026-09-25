@@ -16,6 +16,8 @@ distinction matters the moment state plane data is reprojected. Always
 name which foot is meant.
 """
 
+import re
+
 # --- length ---------------------------------------------------------------
 
 M_PER_FT = 0.3048                       # international foot, exact
@@ -56,3 +58,113 @@ def in_to_ft(inches):
 
 def ft_to_in(ft):
     return ft * IN_PER_FT
+
+
+# --- rod readings as written -----------------------------------------------
+
+_NUM = r"(?:\d+(?:\.\d*)?|\.\d+)"
+_FRAC = r"\d+\s*/\s*\d+"
+# Inches, optionally with a fraction: 63, 63.25, 63 1/4, 63-1/4, 1/4.
+_INCHES = re.compile(
+    rf"^(?:(?P<whole>{_NUM})(?:\s*-\s*|\s+)(?P<frac>{_FRAC})"
+    rf"|(?P<plain>{_NUM})|(?P<only>{_FRAC}))$")
+# A grade rod read as feet-inches-fraction: 5-3-1/4, or feet-inches: 5-3.
+_GRADE = re.compile(
+    rf"^(?P<ft>\d+)\s*-\s*(?P<inch>{_NUM})(?:\s*-\s*(?P<frac>{_FRAC}))?$")
+_VULGAR = {"¼": " 1/4", "½": " 1/2", "¾": " 3/4", "⅛": " 1/8", "⅜": " 3/8",
+           "⅝": " 5/8", "⅞": " 7/8", "⅙": " 1/6", "⅓": " 1/3", "⅔": " 2/3"}
+
+
+def _fraction(text: str) -> float:
+    num, den = (int(part) for part in text.replace(" ", "").split("/"))
+    if den == 0:
+        raise ValueError(f"'{text}' divides by zero")
+    return num / den
+
+
+def _inches(text: str, whole_text: str) -> float:
+    m = _INCHES.match(text)
+    if not m:
+        raise ValueError(f"'{whole_text}' is not a rod reading")
+    if m["plain"] is not None:
+        return float(m["plain"])
+    if m["only"] is not None:
+        return _fraction(m["only"])
+    if "." in m["whole"]:
+        raise ValueError(f"'{whole_text}' has both a decimal and a fraction")
+    frac = _fraction(m["frac"])
+    if frac >= 1.0:
+        raise ValueError(f"'{whole_text}': the fraction should be under 1")
+    return float(m["whole"]) + frac
+
+
+def parse_rod(text) -> float:
+    """A rod reading as written in the field, in inches.
+
+    The rod is read in feet, inches and fractions, and SW Maps' number field
+    has pushed readings into inches with fractions. All of these are accepted:
+
+        63   63.25   63 1/4   63-1/4             inches
+        5' 3 1/4"   5'3.25"   5' 3-1/4   5 ft 3 1/4 in
+        5-3-1/4   5-3                            feet-inches(-fraction), as
+                                                 read off a grade rod
+
+    A bare number is inches, as it always has been. Negatives and anything
+    unreadable raise ValueError with a message meant for the user.
+    """
+    if isinstance(text, (int, float)) and not isinstance(text, bool):
+        value = float(text)
+        if value != value:
+            raise ValueError("no rod reading")
+        if value < 0:
+            raise ValueError("a rod reading cannot be negative")
+        return value
+
+    raw = str(text).strip()
+    s = raw.lower()
+    for glyph, spelled in _VULGAR.items():
+        s = s.replace(glyph, spelled)
+    for mark in ("′", "’", "‘", "`"):
+        s = s.replace(mark, "'")
+    for mark in ("″", "”", "“", "''"):
+        s = s.replace(mark, '"')
+    s = re.sub(r"\s*(?<![a-z])(?:feet|foot|ft)(?![a-z])\.?", "'", s)
+    s = re.sub(r"\s*(?<![a-z])(?:inches|inch|in)(?![a-z])\.?", '"', s)
+    s = s.strip()
+    if not s:
+        raise ValueError("no rod reading")
+    if s.startswith("-"):
+        raise ValueError("a rod reading cannot be negative")
+
+    if "'" in s:
+        feet_text, _, rest = s.partition("'")
+        feet_text = feet_text.strip()
+        if not re.fullmatch(_NUM, feet_text):
+            raise ValueError(f"'{raw}' is not a rod reading")
+        rest = rest.strip()
+        if rest.endswith('"'):
+            rest = rest[:-1].strip()
+        rest = rest.lstrip("-").strip()
+        if "'" in rest or '"' in rest:
+            raise ValueError(f"'{raw}' is not a rod reading")
+        inches = _inches(rest, raw) if rest else 0.0
+        if inches >= 12.0:
+            raise ValueError(f"'{raw}': the inches should be under 12")
+        return float(feet_text) * IN_PER_FT + inches
+
+    if s.endswith('"'):
+        s = s[:-1].strip()
+    grade = _GRADE.match(s)
+    if grade and "/" not in grade["inch"]:
+        inches = float(grade["inch"])
+        if grade["frac"] is not None:
+            if "." in grade["inch"]:
+                raise ValueError(f"'{raw}' has both a decimal and a fraction")
+            frac = _fraction(grade["frac"])
+            if frac >= 1.0:
+                raise ValueError(f"'{raw}': the fraction should be under 1")
+            inches += frac
+        if inches >= 12.0:
+            raise ValueError(f"'{raw}': the inches should be under 12")
+        return float(grade["ft"]) * IN_PER_FT + inches
+    return _inches(s, raw)

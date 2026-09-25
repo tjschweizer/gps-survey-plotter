@@ -113,9 +113,42 @@ def test_typing_a_rod_reading_records_it(state):
 
 def test_a_non_numeric_rod_reading_is_rejected(state):
     _seed(state)
-    with pytest.raises(PE.PlanEditError, match="not a number of inches"):
+    with pytest.raises(PE.PlanEditError, match="not a rod reading"):
         _edit(state, 1, "rod", "forty five")
     assert state.plan.by_number(1).rod_in is None
+
+
+def test_a_negative_rod_reading_is_rejected(state):
+    _seed(state)
+    with pytest.raises(PE.PlanEditError, match="negative"):
+        _edit(state, 1, "rod", "-45")
+    assert state.plan.by_number(1).rod_in is None
+
+
+@pytest.mark.parametrize("text", ["63 1/4", "5' 3 1/4\"", "5-3-1/4"])
+def test_feet_inches_and_fractions_are_read_as_written(state, text):
+    _seed(state)
+    _edit(state, 1, "rod", text)
+    assert state.plan.by_number(1).rod_in == pytest.approx(63.25)
+    assert _drawn(state, 1)["rod"] == "63.25"
+
+
+def test_a_reading_under_a_foot_asks_whether_it_was_feet(state):
+    """"5.26" is far more likely 5.26 ft than a rod read at 5 inches."""
+    _seed(state)
+    with pytest.raises(PE.NeedsConfirmation, match="Did you mean feet"):
+        PE.edit_cell(state.plan, 1, "rod", "5.26")
+    assert state.plan.by_number(1).rod_in is None
+    PE.edit_cell(state.plan, 1, "rod", "5.26", confirm=True)
+    assert state.plan.by_number(1).rod_in == pytest.approx(5.26)
+
+
+def test_a_reading_past_the_top_of_the_rod_asks(state):
+    _seed(state)
+    with pytest.raises(PE.NeedsConfirmation, match="longer than most rods"):
+        PE.edit_cell(state.plan, 1, "rod", "250")
+    PE.edit_cell(state.plan, 1, "rod", "250", confirm=True)
+    assert state.plan.by_number(1).rod_in == pytest.approx(250.0)
 
 
 def test_clearing_a_rod_reading_marks_it_outstanding(state):

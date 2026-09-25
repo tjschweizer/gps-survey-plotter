@@ -51,7 +51,7 @@ from ..model.pointset import (
     SPEED, TIME, TRACK, TZ, VACC, VDOP, Z, PointSet,
 )
 from .base import (SurveyExport, SurveyReader, normalise_kind, numeric,
-                   register_reader)
+                   register_reader, rod_readings)
 from .swmaps import assign_sessions
 
 SUFFIXES = (".swmz", ".swm2")
@@ -330,6 +330,8 @@ def _finish(points: pd.DataFrame, labels: dict, attrs: pd.DataFrame,
         if missing:                       # keyed by point rather than feature
             joined = joined.drop(columns=missing).join(attrs[missing], on="uuid")
         df = joined
+        if ROD_IN in df.columns:
+            df[ROD_IN] = rod_readings(df[ROD_IN])
         numeric(df, (ROD_IN, SETUP))
         if KIND in df.columns:
             df[KIND] = normalise_kind(df[KIND])

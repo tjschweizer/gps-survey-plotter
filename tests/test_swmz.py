@@ -251,6 +251,16 @@ def test_the_type_attribute_is_normalised(tmp_path):
     assert d[P.KIND].iloc[0] == "lawn"
 
 
+def test_a_rod_reading_in_feet_and_inches_is_read(tmp_path):
+    db = _db(tmp_path / "rod.swm2", features=True, attributes=True)
+    con = sqlite3.connect(db)
+    con.execute("UPDATE attribute_values SET value='5-3-1/4' WHERE item_id='f1'")
+    con.commit()
+    con.close()
+    d = read_any(db)["spot_heights"].df
+    assert d[P.ROD_IN].iloc[0] == pytest.approx(63.25)
+
+
 def test_the_raw_log_is_reported_but_not_parsed(swmz):
     exp = read_any(swmz)
     assert "raw_logs" in exp.tables

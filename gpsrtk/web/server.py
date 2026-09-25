@@ -904,7 +904,8 @@ def create_app(state: AppState | None = None, *, vector_providers=None,
         with srv.acting():
             plan_edit(lambda: PE.edit_cell(st.plan, int(body["number"]),
                                            str(body["field"]),
-                                           body.get("value")))
+                                           body.get("value"),
+                                           confirm=bool(body.get("confirm"))))
             return srv.reply()
 
     @app.post("/api/plan/coords")
