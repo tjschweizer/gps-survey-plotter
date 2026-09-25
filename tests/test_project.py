@@ -469,3 +469,37 @@ def test_a_project_without_fingerprints_still_opens(stubbed, tmp_path):
     other, project, warnings = _reopen(stubbed, saved)
     assert project.source_fingerprints == {} and not warnings
     assert other.fingerprints
+
+
+class _DeadProxy(StubProvider):
+    """Fails the way every provider does behind a dead proxy."""
+
+    def fetch(self, extent, epsg, size=1024):
+        raise ConnectionError(
+            f"HTTPSConnectionPool(host='{self.name}.example.org', port=443): Max "
+            f"retries exceeded with url: /arcgis/rest/services/{self.name}/export "
+            "(Caused by ProxyError('Unable to connect to proxy', "
+            "OSError('Tunnel connection failed: 403 Forbidden')))")
+
+
+def test_identical_failures_are_grouped(state, monkeypatch):
+    """Ten providers behind one dead proxy gave ten near-identical errors,
+    each cut off mid-word. Now they are one line naming them all."""
+    dead = {f"dead-{k}": (_DeadProxy(f"dead-{k}"), False) for k in range(4)}
+    monkeypatch.setattr(state, "all_providers",
+                        lambda: {**dead, "broken-one": STUBS["broken-one"]})
+    report = state.fetch_all_imagery()
+    groups = report.failure_groups()
+    assert len(groups) == 2
+    assert sorted(groups[0][1]) == ["dead-0", "dead-1", "dead-2", "dead-3"]
+    text = report.describe()
+    assert "(4 sources)" in text and "dead-0, dead-1, dead-2, dead-3" in text
+    assert "Tunnel connection failed: 403 Forbidden" in text, "not cut mid-word"
+    assert text.count("ProxyError") == 1
+
+
+def test_a_black_holed_service_fails_in_seconds_not_minutes():
+    from gpsrtk.io import imagery, vector
+
+    assert imagery.TIMEOUT[0] == vector.TIMEOUT[0] == 10.0
+    assert imagery.TIMEOUT[1] == 60.0

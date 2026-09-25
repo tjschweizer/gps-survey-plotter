@@ -91,9 +91,43 @@ class FetchReport:
             lines += ["", "No coverage for this lot:"] + [
                 f"  {n}" for n in self.no_coverage]
         if self.failed:
-            lines += ["", "Failed:"] + [f"  {n} — {why}"
-                                        for n, why in self.failed]
+            lines += ["", "Failed:"]
+            for why, names in self.failure_groups():
+                count = f" ({len(names)} sources)" if len(names) > 1 else ""
+                lines.append(f"  {_clip(why)}{count}")
+                lines.append("    " + ", ".join(names))
         return "\n".join(lines)
+
+    def failure_groups(self) -> list[tuple[str, list[str]]]:
+        """Failures with the same cause, together: (first message, names).
+
+        Ten providers behind one dead proxy used to give ten near-identical
+        raw errors, each cut off mid-word. The cause is compared with the
+        parts that differ between providers - URLs, hosts, object addresses
+        - taken out.
+        """
+        groups: dict[str, tuple[str, list[str]]] = {}
+        for name, why in self.failed:
+            key = _failure_signature(why)
+            groups.setdefault(key, (why, []))[1].append(name)
+        return list(groups.values())
+
+
+def _failure_signature(why: str) -> str:
+    import re
+
+    s = re.sub(r"https?://\S+", "<url>", why)
+    s = re.sub(r"host='[^']*'", "host=<host>", s)
+    s = re.sub(r"(url|path): \S+", r"\1: <url>", s)
+    s = re.sub(r"0x[0-9a-fA-F]+", "<addr>", s)
+    return s
+
+
+def _clip(text: str, limit: int = 600) -> str:
+    """Shorten at a word boundary, never mid-word."""
+    if len(text) <= limit:
+        return text
+    return text[:limit].rsplit(" ", 1)[0] + " …"
 
 
 class AppState:
@@ -843,7 +877,7 @@ class AppState:
             except NoCoverageError:
                 no_cover.append(name)
             except Exception as exc:                      # noqa: BLE001
-                failed.append((name, f"{type(exc).__name__}: {exc}"[:90]))
+                failed.append((name, f"{type(exc).__name__}: {exc}"))
 
         for name in fetched:
             if not self.basemaps[name].terrain:

@@ -32,7 +32,10 @@ import numpy as np
 from ..surface import Extent
 
 USER_AGENT = "yardsurvey/0.1 (+terrain survey tooling)"
-TIMEOUT = 60.0
+# (connect, read). A black-holed network used to hold each provider for the
+# full minute before failing - under the server's lock, ten providers in a
+# row - so the connect is given 10 s and the transfer the rest.
+TIMEOUT = (10.0, 60.0)
 
 # A mosaic whose published extent covers the state will still return a blank
 # tile for a county that has not been flown yet, and an ImageServer with a

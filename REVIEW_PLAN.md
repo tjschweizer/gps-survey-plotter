@@ -118,6 +118,7 @@ These were set by the owner and apply to every item.
 | After C18 | 420 passed, 51 skipped, 51 deselected | 46 passed |
 | After C19 | 421 passed, 51 skipped, 52 deselected | 47 passed |
 | After C20 | 422 passed, 51 skipped, 53 deselected | 48 passed |
+| After C21 | 424 passed, 51 skipped, 53 deselected | not re-run (no page change) |
 
 Of the 55 skips, 50 need real data. The other 5 are network tests that the
 sandbox proxy refused.
@@ -200,8 +201,8 @@ These answers change the designs in section 5.
 | 27 | C17 | Legend: ticks, marker key, no overlap | UI | ✅ `b336ab9` |
 | 28 | C18 | Contrast, colour tokens, type and spacing scale | UI | ✅ `0a653d7` |
 | 29 | C19 | Rod column second, in the table and the field sheet | UI | ✅ `9b905b7` |
-| 30 | C20 | Readable filter stack | UI | ✅ |
-| 31 | C21 | Grouped fetch errors and a short connect timeout | UI | todo |
+| 30 | C20 | Readable filter stack | UI | ✅ `f3a6f34` |
+| 31 | C21 | Grouped fetch errors and a short connect timeout | UI | ✅ |
 | 32 | C22 | File dialog: date column, sorting, keyboard | UI | todo |
 | 33 | C23 | Keyboard menus and labelled fields | UI | todo |
 | 34 | A8 | Start panel and recent files | UI | todo |
@@ -1135,7 +1136,16 @@ Evidence for these is in the review screenshots: synthetic export,
 - **Verify:** browser test.
 - **Breaking?:** no.
 
-**C21 — Grouped fetch errors and a short connect timeout**
+**C21 — Grouped fetch errors and a short connect timeout** ✅
+- **Done:** `imagery.TIMEOUT = (10.0, 60.0)` and `vector.TIMEOUT = (10.0,
+  45.0)` (connect, read). `fetch_all_imagery` keeps the whole message;
+  `FetchReport.failure_groups()` groups failures whose messages match once
+  URLs, hosts and object addresses are taken out, and `describe()` prints
+  one line per group (the first message, clipped only past 600 characters
+  and at a word) with the providers named under it. In the toast (C15) the
+  summary line is the counts and the groups are behind Details. Tests:
+  `test_project.py::test_identical_failures_are_grouped`,
+  `::test_a_black_holed_service_fails_in_seconds_not_minutes`.
 - **What:** identical failures are grouped into one line, with details on
   expand. Use `timeout=(10, 60)` (connect, read). Files: `io/imagery.py`
   (and `io/vector.py`), `app/state.py` `FetchReport.describe`.

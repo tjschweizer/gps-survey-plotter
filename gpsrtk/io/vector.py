@@ -24,7 +24,8 @@ import numpy as np
 from ..surface import Extent
 
 USER_AGENT = "yardsurvey/0.1 (+terrain survey tooling)"
-TIMEOUT = 45.0
+# (connect, read): fail fast when the service cannot be reached at all.
+TIMEOUT = (10.0, 45.0)
 
 
 @dataclass
