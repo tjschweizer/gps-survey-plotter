@@ -820,3 +820,45 @@ def test_the_fix_filter_is_two_checkboxes(page, live):
         with live.server.acting():
             next(s for s in live.state.chain.stages if s.kind == "fix_select").values = (4,)
             live.state.recompute()
+
+
+def test_the_file_dialog_sorts_by_date_and_answers_the_keyboard(page, live, tmp_path):
+    import os
+    import time as _time
+
+    folder = tmp_path / "exports"
+    (folder / "older outings").mkdir(parents=True)
+    old, new = folder / "a-first.zip", folder / "b-latest.zip"
+    old.write_bytes(b"x")
+    new.write_bytes(b"y")
+    now = _time.time()
+    os.utime(old, (now - 86400 * 30, now - 86400 * 30))
+    os.utime(new, (now, now))
+    previous = live.server.last_dir
+    live.server.last_dir = str(folder)
+    try:
+        page.click("#menubar .menu-root > button:has-text('File')")
+        page.locator("#menubar .menu:visible button.item:has-text('Open export')").click()
+        dialog = page.locator("dialog[open]")
+        dialog.wait_for()
+        names = lambda: dialog.locator(".list .entry .name").all_inner_texts()  # noqa: E731
+        page.wait_for_timeout(300)
+        assert names() == ["older outings", "a-first.zip", "b-latest.zip"]
+        dates = dialog.locator(".list .entry .date").all_inner_texts()
+        assert dates[0] == "" and dates[1][:2] == "20" and len(dates[1]) == 16
+
+        dialog.locator("button.sort:has-text('Modified')").click()
+        assert names() == ["older outings", "b-latest.zip", "a-first.zip"]
+
+        list_ = dialog.locator(".list")
+        list_.focus()
+        page.keyboard.press("ArrowDown")                 # the folder
+        page.keyboard.press("ArrowDown")                 # the newest file
+        assert dialog.locator("input[aria-label='File name']").input_value() == "b-latest.zip"
+        page.keyboard.press("ArrowUp")
+        page.keyboard.press("Enter")                     # into the folder
+        page.wait_for_timeout(300)
+        assert dialog.locator("input[aria-label='Folder']").input_value().endswith("older outings")
+        page.keyboard.press("Escape")
+    finally:
+        live.server.last_dir = previous

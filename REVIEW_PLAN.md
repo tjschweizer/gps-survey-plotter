@@ -119,6 +119,7 @@ These were set by the owner and apply to every item.
 | After C19 | 421 passed, 51 skipped, 52 deselected | 47 passed |
 | After C20 | 422 passed, 51 skipped, 53 deselected | 48 passed |
 | After C21 | 424 passed, 51 skipped, 53 deselected | not re-run (no page change) |
+| After C22 | 424 passed, 51 skipped, 54 deselected | 49 passed |
 
 Of the 55 skips, 50 need real data. The other 5 are network tests that the
 sandbox proxy refused.
@@ -202,8 +203,8 @@ These answers change the designs in section 5.
 | 28 | C18 | Contrast, colour tokens, type and spacing scale | UI | ✅ `0a653d7` |
 | 29 | C19 | Rod column second, in the table and the field sheet | UI | ✅ `9b905b7` |
 | 30 | C20 | Readable filter stack | UI | ✅ `f3a6f34` |
-| 31 | C21 | Grouped fetch errors and a short connect timeout | UI | ✅ |
-| 32 | C22 | File dialog: date column, sorting, keyboard | UI | todo |
+| 31 | C21 | Grouped fetch errors and a short connect timeout | UI | ✅ `8cd2b66` |
+| 32 | C22 | File dialog: date column, sorting, keyboard | UI | ✅ |
 | 33 | C23 | Keyboard menus and labelled fields | UI | todo |
 | 34 | A8 | Start panel and recent files | UI | todo |
 | 35 | C29 | Solve report wording | UI | todo |
@@ -1155,7 +1156,14 @@ Evidence for these is in the review screenshots: synthetic export,
 - **Verify:** a stub-provider test.
 - **Breaking?:** no.
 
-**C22 — File dialog**
+**C22 — File dialog** ✅
+- **Done:** `dialogs.fileDialog`: a header row (Name, Modified, Size) whose
+  Name and Modified buttons sort (by name, or newest first; folders always
+  lead), a Modified column from `mtime` (local "YYYY-MM-DD HH:MM"), and a
+  keyboard on the list: Up/Down/PageUp/PageDown move the active row (a file
+  becomes the chosen name), Home/End, Enter opens a folder or accepts a
+  file, Backspace goes up; `aria-activedescendant` and `aria-selected` are
+  kept. Test: `test_web_browser.py::test_the_file_dialog_sorts_by_date_and_answers_the_keyboard`.
 - **What:** a Modified column (`mtime` is already sent, `files.py:65`),
   sorting by name or date, and arrow keys plus Enter in the list.
   File: `dialogs.js`.

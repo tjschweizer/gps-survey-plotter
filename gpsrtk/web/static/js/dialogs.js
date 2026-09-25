@@ -123,6 +123,13 @@ function joinPath(dir, name, sep) {
   return dir.endsWith(sep) ? dir + name : dir + sep + name;
 }
 
+function dateText(mtime) {
+  if (mtime == null) return "";
+  const d = new Date(mtime * 1000);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 function sizeText(bytes) {
   if (bytes == null) return "";
   if (bytes < 1024) return `${bytes} B`;
@@ -140,9 +147,20 @@ export function fileDialog({ title, mode = "open", filters = FILTERS.export,
   let listing = null;
   let filter = filters[0];
   let chosen = null;
+  // Sorted by name, or newest first by date; folders always lead. The
+  // keyboard moves `active` through the rows, as a list box should.
+  let sortBy = "name";
+  let rows = [];
+  let active = -1;
 
   const pathInput = h("input", { type: "text", "aria-label": "Folder" });
-  const list = h("div", { class: "list", role: "listbox", tabindex: "0" });
+  const list = h("div", { class: "list", role: "listbox", tabindex: "0", "aria-label": "Files" });
+  const sortButton = (key, label) => h("button", {
+    type: "button", class: "sort", dataset: { key },
+    onclick: () => { sortBy = key; render(); },
+  }, label);
+  const header = h("div", { class: "entry header" }, h("span"),
+    sortButton("name", "Name"), sortButton("date", "Modified"), h("span", { class: "size" }, "Size"));
   const nameInput = h("input", { type: "text", "aria-label": "File name" });
   const filterSelect = h("select", { "aria-label": "File type" },
     filters.map((f, i) => h("option", { value: String(i) }, f.label)));
@@ -155,7 +173,7 @@ export function fileDialog({ title, mode = "open", filters = FILTERS.export,
       h("button", { type: "button", title: "Up one folder", onclick: () => listing?.parent && load(listing.parent) }, "Up"),
       pathInput,
       h("button", { type: "button", onclick: () => load(pathInput.value) }, "Go")),
-    list,
+    h("div", { class: "table" }, header, list),
     h("div", { class: "namebar" },
       h("span", {}, mode === "save" ? "Save as" : "File"), nameInput, filterSelect),
     error);
@@ -180,30 +198,80 @@ export function fileDialog({ title, mode = "open", filters = FILTERS.export,
     render();
   }
 
+  function sorted(entries) {
+    const byName = (a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+    const dirs = entries.filter((e) => e.dir).sort(byName);
+    const files = entries.filter((e) => !e.dir)
+      .sort(sortBy === "date" ? (a, b) => (b.mtime ?? 0) - (a.mtime ?? 0) || byName(a, b) : byName);
+    return [...dirs, ...files];
+  }
+
   function render() {
     clear(list);
-    if (!listing.entries.length) list.append(h("div", { class: "entry muted" }, "", "Nothing here matches.", ""));
-    for (const entry of listing.entries) {
+    for (const b of header.querySelectorAll("button.sort")) {
+      b.setAttribute("aria-pressed", String(b.dataset.key === sortBy));
+    }
+    if (!listing.entries.length) list.append(h("div", { class: "entry muted" }, "", "Nothing here matches.", "", ""));
+    rows = sorted(listing.entries);
+    if (active >= rows.length) active = rows.length - 1;
+    rows.forEach((entry, i) => {
       const row = h("div", {
-        class: "entry" + (entry.dir ? " dir" : "") + (chosen === entry.path ? " chosen" : ""),
-        role: "option", title: entry.path,
+        id: `file-${i}`,
+        class: "entry" + (entry.dir ? " dir" : "") + (chosen === entry.path ? " chosen" : "")
+               + (i === active ? " active" : ""),
+        role: "option", title: entry.path, "aria-selected": String(chosen === entry.path),
         onclick: () => {
-          if (entry.dir) return;
-          chosen = entry.path;
-          nameInput.value = entry.name;
-          render();
+          active = i;
+          if (entry.dir) { render(); return; }
+          choose(entry);
         },
-        ondblclick: () => {
-          if (entry.dir) load(entry.path);
-          else { chosen = entry.path; nameInput.value = entry.name; accept(); }
-        },
+        ondblclick: () => open(entry),
       },
       h("span", { class: "glyph" }, entry.dir ? "▸" : "·"),
       h("span", { class: "name" }, entry.name),
+      h("span", { class: "date" }, entry.dir ? "" : dateText(entry.mtime)),
       h("span", { class: "size" }, entry.dir ? "" : sizeText(entry.size)));
       list.append(row);
+    });
+    if (active >= 0) {
+      list.setAttribute("aria-activedescendant", `file-${active}`);
+      list.querySelector(".entry.active")?.scrollIntoView({ block: "nearest" });
+    } else {
+      list.removeAttribute("aria-activedescendant");
     }
   }
+
+  function choose(entry) {
+    chosen = entry.path;
+    nameInput.value = entry.name;
+    render();
+  }
+
+  function open(entry) {
+    if (entry.dir) { active = -1; load(entry.path); }
+    else { chosen = entry.path; nameInput.value = entry.name; accept(); }
+  }
+
+  list.addEventListener("keydown", (e) => {
+    if (!rows.length) return;
+    const step = { ArrowDown: 1, ArrowUp: -1, PageDown: 10, PageUp: -10 }[e.key];
+    if (step) {
+      e.preventDefault();
+      active = Math.max(0, Math.min(rows.length - 1, (active < 0 ? -1 : active) + step));
+      if (!rows[active].dir) choose(rows[active]); else render();
+    } else if (e.key === "Home" || e.key === "End") {
+      e.preventDefault();
+      active = e.key === "Home" ? 0 : rows.length - 1;
+      render();
+    } else if (e.key === "Enter" && active >= 0) {
+      e.preventDefault();
+      open(rows[active]);
+    } else if (e.key === "Backspace" && listing?.parent) {
+      e.preventDefault();
+      active = -1;
+      load(listing.parent);
+    }
+  });
 
   async function accept() {
     let name = nameInput.value.trim();
@@ -228,7 +296,7 @@ export function fileDialog({ title, mode = "open", filters = FILTERS.export,
     filter = filters[Number(filterSelect.value)];
     load(listing?.dir);
   });
-  roots.addEventListener("change", () => load(roots.value));
+  roots.addEventListener("change", () => { active = -1; load(roots.value); });
   pathInput.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); load(pathInput.value); } });
   nameInput.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); accept(); } });
 
