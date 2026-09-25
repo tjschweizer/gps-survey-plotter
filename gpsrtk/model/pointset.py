@@ -12,6 +12,7 @@ file carries three trailing custom-attribute columns that the other files lack.
 
 from __future__ import annotations
 
+import itertools
 from dataclasses import dataclass, field, replace
 
 import numpy as np
@@ -68,6 +69,11 @@ FIX_FLOAT = 5
 
 REQUIRED = (E, N, Z)
 
+# Every PointSet ever made gets the next number. Unlike `id()`, which Python
+# hands out again once an object has been collected, a token is never reused,
+# so a cache keyed on it cannot mistake a new data set for an old one.
+_TOKENS = itertools.count(1)
+
 
 @dataclass
 class PointSet:
@@ -82,12 +88,14 @@ class PointSet:
     df: pd.DataFrame
     layer: str = ""                       # 'track_points', 'spots', ...
     history: tuple[str, ...] = field(default_factory=tuple)
+    token: int = field(init=False, repr=False, compare=False)
 
     def __post_init__(self):
         missing = [c for c in REQUIRED if c not in self.df.columns]
         if missing:
             raise ValueError(
                 f"PointSet missing required column(s): {', '.join(missing)}")
+        self.token = next(_TOKENS)
 
     def __len__(self) -> int:
         return len(self.df)

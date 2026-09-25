@@ -167,8 +167,8 @@ These answers change the designs in section 5.
 | 10 | C25 | Split sessions where the data proves a mount change | processing | ✅ `0817709` (**session names change**) |
 | 11 | C6 | One overlap definition for the merge report and the solve | processing | ✅ `06f3c15` |
 | 12 | O1 | Session offsets from cell differences | processing | ✅ `42425eb` |
-| 13 | O2 | Compute crossovers and slope once | code health | ✅ |
-| 14 | O3 | Filter-chain cache keyed by a token | code health | todo |
+| 13 | O2 | Compute crossovers and slope once | code health | ✅ `1a20e3b` |
+| 14 | O3 | Filter-chain cache keyed by a token | code health | ✅ |
 | 15 | C3 | Heights labelled by vertical model | processing | todo |
 | 16 | A6 | Source fingerprints | code health | todo |
 | 17 | A2 | Fill plan shots from SW Maps records by station | workflow | todo |
@@ -598,7 +598,14 @@ updating after a local run. Report that; don't guess.
 - **Verify:** identical numbers before and after, plus a timing check.
 - **Breaking?:** no.
 
-**O3 — Filter-chain cache keyed by a token**
+**O3 — Filter-chain cache keyed by a token** ✅
+- **Done:** every `PointSet` gets `token` from a module-level
+  `itertools.count` in `__post_init__` (so `replace()`, `select()` and
+  `with_frame()` all get fresh ones); `FilterChain` keys its prefix cache on
+  `_source_token`. Tests: `test_filters.py::test_a_new_source_of_the_same_size_is_filtered_afresh`
+  (on this machine the replacement did land at the old address, and the old
+  code returned the old export's 7,987 points instead of 0),
+  `::test_every_point_set_has_its_own_token`.
 - **What:** `FilterChain.run` keys its prefix cache on `id(ps)`
   (`filters/base.py:106`), which Python can reuse after garbage collection.
   Give each PointSet a monotonically increasing token, or let `AppState` pass

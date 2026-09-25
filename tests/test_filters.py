@@ -113,3 +113,37 @@ def test_bin_leaves_mixed_session_cells_unlabelled(tracks, site):
 
     out = F.BinToCell(cell=2.0).for_site(site).apply(mixed)
     assert out.df[P.SESSION].isna().any()
+
+
+def test_a_new_source_of_the_same_size_is_filtered_afresh(state):
+    """The prefix cache was keyed on id(), which Python hands out again once
+    an object is collected. A new export of the same size at a reused
+    address was served the old export's result. It is keyed on a token now,
+    which is never reused."""
+    import gc
+
+    tracks = state.layers["track_points"]
+    chain = F.default_chain()
+    first = tracks.with_frame(tracks.df.copy(), "all fixed")
+    first.df[P.FIX] = P.FIX_RTK
+    kept_before = len(chain.run(first))
+    address = id(first)
+    del first
+    gc.collect()
+
+    # Try to land the replacement at the same address, as happens in
+    # practice; the answer must be right whether or not it does.
+    for _ in range(50):
+        second = tracks.with_frame(tracks.df.copy(), "all float")
+        second.df[P.FIX] = P.FIX_FLOAT
+        if id(second) == address:
+            break
+    assert kept_before > 0
+    assert len(chain.run(second)) == 0
+
+
+def test_every_point_set_has_its_own_token(state):
+    tracks = state.layers["track_points"]
+    tokens = {tracks.token, tracks.select(tracks.df[P.FIX] == 4).token,
+              tracks.with_frame(tracks.df, "same frame").token}
+    assert len(tokens) == 3

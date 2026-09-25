@@ -89,7 +89,7 @@ class FilterChain:
     stages: list[Stage] = field(default_factory=list)
     _cache: list[PointSet] = field(default_factory=list, repr=False)
     _signatures: list[str] = field(default_factory=list, repr=False)
-    _source_id: int | None = field(default=None, repr=False)
+    _source_token: int | None = field(default=None, repr=False)
     results: list[StageResult] = field(default_factory=list, repr=False)
 
     def add(self, stage: Stage) -> "FilterChain":
@@ -102,8 +102,11 @@ class FilterChain:
 
         # Find the first stage whose parameters changed. Everything before it
         # is still valid; everything from it onward must be recomputed.
+        # Keyed on the source's token, not `id()`: Python reuses an id once
+        # the old object is collected, and a new export of the same size at
+        # the same address would have been served the old one's results.
         start = 0
-        if self._source_id == id(ps):
+        if self._source_token == ps.token:
             while (start < len(sigs) and start < len(self._signatures)
                    and start < len(self._cache)
                    and sigs[start] == self._signatures[start]):
@@ -121,7 +124,7 @@ class FilterChain:
             self._cache.append(current)
 
         self._signatures = sigs
-        self._source_id = id(ps)
+        self._source_token = ps.token
 
         # Rebuild the full report, including the cached prefix.
         self.results = []
