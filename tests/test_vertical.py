@@ -354,3 +354,41 @@ def test_older_site_json_without_tie_fields_still_loads(tmp_path):
     back = Site.load(path)
     assert back.vertical.benchmark_point_id == 1
     assert back.vertical.tied_to_model is False
+
+
+# --- which rod shots reach the network (synthetic) ------------------------
+
+def test_a_benchmark_plan_shot_can_hold_the_datum(state):
+    """A plan shot whose purpose is "benchmark" is levelling like any other.
+    It used to be left out of the network, so the datum could not hang from
+    the garage slab: "benchmark point 101 is not among the rod shots"."""
+    point = state.plan.add_point(449705.0, 4604555.0, purpose="benchmark",
+                                 setup="0")
+    point.number = 101
+    point.rod_in = 30.0
+    state.plan_changed()
+    state.site.vertical.benchmark_point_id = 101
+    state.site.vertical.benchmark_elev_ft = 100.0
+
+    model = state.solve_vertical("local")
+    assert model.level.elevations[101] == pytest.approx(ft_to_m(100.0), abs=1e-6)
+    # The other shots moved with it: the same setup reads them against it.
+    assert 1 in model.level.elevations
+    assert model.tie and model.tie["n"] > 0
+
+
+def test_a_building_shot_joins_the_network_but_not_the_tie(state):
+    """A "bldg" rod shot is levelled, and can hold the datum, but it does
+    not describe the ground, so the tie to the GNSS surface leaves it out."""
+    spots = state.layers["spots"]
+    d = spots.df.copy()
+    d.loc[d["point_id"] == 12, P.KIND] = "bldg"
+    spots = spots.with_frame(d, "one building shot")
+
+    model = V.solve_vertical(state.filtered, spots, mode="local",
+                             benchmark_id=12, benchmark_elev_ft=100.0)
+    assert model.level.elevations[12] == pytest.approx(ft_to_m(100.0), abs=1e-6)
+    lawn = F.KindSelect(names=["lawn"]).apply(spots)
+    reference = V.spots_with_laser_elevations(lawn, model.level)
+    assert 12 not in set(reference.df["point_id"])
+    assert len(reference) == len(lawn)

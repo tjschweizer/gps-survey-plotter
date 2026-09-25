@@ -529,12 +529,18 @@ def solve_vertical(tracks: PointSet, spots: PointSet | None = None, *,
                           tied_to_model=tied_to_model,
                           model_frame=model_frame)
 
+    # Every rod reading is levelling, whatever it was read on: a garage slab
+    # or a benchmark nail is exactly what the datum should hang from. Only
+    # terrain shots describe the ground, though, so only they (`lawn`) reach
+    # the tie to the GNSS surface and the session-offset evidence.
     lawn = None
     if spots is not None and len(spots):
         lawn = KindSelect(names=list(lawn_kinds)).apply(spots)
-        if ROD_IN in lawn.df.columns and lawn.df[ROD_IN].notna().any():
-            ids = set(lawn.df["point_id"].dropna().astype(int)) \
-                if "point_id" in lawn.df.columns else set()
+        d = spots.df
+        if ROD_IN in d.columns and d[ROD_IN].notna().any():
+            rod = d[d[ROD_IN].notna()]
+            ids = set(rod["point_id"].dropna().astype(int)) \
+                if "point_id" in rod.columns else set()
             if ids and benchmark_id not in ids:
                 # Silently falling back would produce a surface on a datum the
                 # user believes is tied when it is not.
@@ -543,7 +549,7 @@ def solve_vertical(tracks: PointSet, spots: PointSet | None = None, *,
                     f"shots ({min(ids)}-{max(ids)}). Pick a point that was "
                     "actually shot, or clear the datum tie.")
             model.level = level_network(
-                lawn, benchmark_id=benchmark_id,
+                spots, benchmark_id=benchmark_id,
                 benchmark_elev_ft=benchmark_elev_ft)
 
     # --- session offsets ---
@@ -577,6 +583,12 @@ def solve_vertical(tracks: PointSet, spots: PointSet | None = None, *,
         return model
 
     reference = spots_with_laser_elevations(lawn, model.level)
+    if len(reference) == 0:
+        model.notes.append(
+            "no terrain rod shots (lawn) carry a laser elevation, so the local "
+            "datum cannot be tied; elevations remain on the reference "
+            "session's arbitrary frame")
+        return model
     provisional = apply_vertical(tracks, offsets=model.offsets or None)
     tie = offset_to_reference(provisional, reference, column=ELEV,
                               reference_column=ELEV)

@@ -96,6 +96,7 @@ These were set by the owner and apply to every item.
 | After C11 | 288 passed, 51 skipped (+1: `tzset` test on Windows), 40 deselected | — |
 | After C12 | 292 passed, 51 skipped, 40 deselected | — |
 | After C7 | 335 passed, 51 skipped, 40 deselected | 35 passed |
+| After C1 | 337 passed, 51 skipped, 40 deselected | — |
 
 Of the 55 skips, 50 need real data. The other 5 are network tests that the
 sandbox proxy refused.
@@ -149,8 +150,8 @@ These answers change the designs in section 5.
 | 4 | C8 | Normalise the `type` attribute | processing | ✅ `ae4c254` |
 | 5 | C11 | Correct daylight-saving times for `.swmz` | processing | ✅ `731a4e4` |
 | 6 | C12 | Instrument height guard | processing | ✅ `5ca29f2` |
-| 7 | C7 | Rod entry guard: feet, inches and fractions | workflow | ✅ |
-| 8 | C1 | Every rod shot joins the level network | processing | todo |
+| 7 | C7 | Rod entry guard: feet, inches and fractions | workflow | ✅ `2fd6e47` |
+| 8 | C1 | Every rod shot joins the level network | processing | ✅ |
 | 9 | C2 | Station identities: plan shots vs SW Maps records | processing | todo (**format/meaning**) |
 | 10 | C25 | Split sessions where the data proves a mount change | processing | todo (**session names change**) |
 | 11 | C6 | One overlap definition for the merge report and the solve | processing | todo |
@@ -312,7 +313,16 @@ the review session's scratchpad.
 
 ### Level network and sessions
 
-**C1 — Every rod shot joins the level network**
+**C1 — Every rod shot joins the level network** ✅
+- **Done:** `solve_vertical` passes the whole spot set to `level_network`
+  (which already skips rows with no reading, and now forward-fills setups
+  across every kind) and checks the benchmark against every rod shot.
+  `lawn` still feeds the tie and the session-offset evidence; a solve with
+  rod shots but no terrain ones now says so in the notes instead of tying
+  to nothing. Tests: `test_vertical.py::test_a_benchmark_plan_shot_can_hold_the_datum`
+  (the E1b scenario), `::test_a_building_shot_joins_the_network_but_not_the_tie`.
+  **Needs a local real-data run:** the real spots include `bldg` shots,
+  which now join the network (`test_vertical.py` real-data tests).
 - **What:** `vertical.solve_vertical`. `level_network` gets every spot with a
   rod reading, of any kind. Only terrain kinds (`"lawn"`, and the plan's
   terrain purposes, which already map to `"lawn"`) feed the tie reference
