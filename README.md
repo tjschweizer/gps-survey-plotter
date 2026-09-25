@@ -375,8 +375,9 @@ Two things the panel will tell you that are worth acting on:
 The level network solves one elevation per **station**: the physical point a
 rod was read on. Two readings are the same point exactly when they share a
 station, which is how a benchmark read at the open and close of a setup, or
-from two setups, checks itself. Name records in SW Maps by this convention,
-in the record's name or in a `station` attribute:
+from two setups, checks itself. A SW Maps field project (below) offers every
+station in a pick list; otherwise name records by this convention, in the
+record's name or in a `station` attribute:
 
 - a **planned shot** is `P` and its number: **`P12`**;
 - a **permanent mark** is its mark name, for example **`BM1`**;
@@ -401,12 +402,18 @@ optionally the elevation it is held at and a note), then:
 - set 2–3 permanent marks, such as mag nails or rebar, **outside the mowed
   area**;
 - shoot a mark with the **fixed-height pole** at the **start and end of every
-  outing**, recorded in SW Maps under the mark's name (`BM1`);
-- read the rod on `BM1` from **every laser setup**, at the open and the close;
+  outing**, in the field project's **control checks** layer, picking the mark
+  (`BM1`);
+- read the rod on `BM1` from **every laser setup**, at the open and the close,
+  as a shot on station `BM1`;
 - tie one mark to the Revit model's garage slab or door threshold, once.
 
-A SW Maps record whose station is a mark name is a **check shot**. It belongs
-to the track session nearest in time in the same export, within an hour. Two
+A record in the **control checks** layer is a **check shot**, and nothing else
+is: a rod reading on `BM1` was taken with the antenna on the rod, not on the
+pole, and counting it would put the difference between the two into the
+residuals. A check shot belongs to the track session nearest in time in the
+same export, within an hour, so record the outing's mower tracks in the same
+SW Maps project as its checks. Two
 sessions that shot the same mark are tied directly - the pole is the same
 height every time, so the difference in their heights is the difference
 between the sessions - which makes a session linked only through a mark
@@ -467,6 +474,47 @@ Outlines live in the shot plan, so they travel in the project and in a
 `.yardplan`. They made the plan format version 2. An older build refuses a
 version 2 plan, or a project holding one, with its "newer" message rather
 than silently dropping the keep-out areas.
+
+## SW Maps field projects
+
+**Export ▸ SW Maps field project…** writes a `.swmz` for the next outing,
+named for the site and the day (SW Maps names the project after the file).
+Import it into SW Maps as a project; record the outing's mower tracks in it
+too. It holds three point layers:
+
+| Layer | What it is | Fields |
+|---|---|---|
+| **plan** (purple +) | every outstanding plan shot, labelled `P12`: one with no rod reading yet, or an outline corner not yet located | station, purpose |
+| **shots** (red ○) | every reading, recorded as a **new** point: with GNSS, or by tapping your position on the map under canopy | station, rod (in), setup, type |
+| **control checks** (green △) | the fixed-height pole on a mark, start and end of the outing; GNSS only | mark |
+
+In the field: pick a plan point and use **Stake Out**, which gives the
+distance and bearing to it. At the point, record a new `shots` point and
+pick its **station**: the list holds every plan shot (so a doubtful reading
+can be taken again), the control marks and `TP1`–`TP3`. Type the **rod** as
+you read it - `63 3/8`, `5' 3 3/8"` or `5-3-3/8`. Pick the **setup** on the
+first shot after moving the laser; blank means the one before. Pick a
+**type** only for a shot the plan does not know: a planned shot is what the
+plan says it is. SW Maps' own remarks box becomes the shot's note. The
+control checks layer is there only when marks are declared (**Datum ▸
+Control marks…**).
+
+Readings go into new points rather than into the plan's own: a pre-filled
+point keeps the time it was generated and the position it was planned at,
+and a reading has to bring back both its time (a blank setup means the one
+before it) and, where the sky allows, a measured position.
+
+Back in the office, export the project from SW Maps and use **File ▸ Add
+export**. The plan layer is left out; a shot's reading, setup, RTK fixed
+position and remarks fill the plan's empty cells, as `P12` records always
+have; a record with nothing filled in - a stray tap - is left out and
+counted. A tapped point carries no height (SW Maps writes 0 m, which would
+pass for a GNSS height), so it never reaches the session offsets or the
+check shots. An unplanned shot whose type is a terrain purpose (spot, swale
+bottom, crown, …) is terrain, like `lawn`.
+
+A field project carries coordinates, like any export, and `*.swmz` is not
+version controlled.
 
 ## Imagery and reference linework
 
