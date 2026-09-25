@@ -109,6 +109,7 @@ These were set by the owner and apply to every item.
 | After A3 | 403 passed, 51 skipped, 40 deselected | 36 passed |
 | After A5 | 408 passed, 51 skipped, 42 deselected | 37 passed |
 | After A1 | 414 passed, 51 skipped, 42 deselected | 37 passed |
+| After A7 | 416 passed, 51 skipped, 43 deselected | 38 passed |
 
 Of the 55 skips, 50 need real data. The other 5 are network tests that the
 sandbox proxy refused.
@@ -182,8 +183,8 @@ These answers change the designs in section 5.
 | 18 | A4 | Per-setup level closure and laser check | workflow | ✅ `7d29d7b` |
 | 19 | A3 | Control marks and start/end check shots | workflow | ✅ `1a5cf80` (**format v3**) |
 | 20 | A5 | Tie transects | workflow | ✅ `062fd1f` |
-| 21 | A1 | Laser terrain shots in the surface (and the Revit file) | processing | ✅ |
-| 22 | A7 | Spot IDs on the map and in the datum dialog | UI | todo |
+| 21 | A1 | Laser terrain shots in the surface (and the Revit file) | processing | ✅ `e1bb548` |
+| 22 | A7 | Spot IDs on the map and in the datum dialog | UI | ✅ |
 | 23 | C13 | Status strip above the map | UI | todo |
 | 24 | C14 | Points drawn under the surface's weight | UI | todo |
 | 25 | C15 | Success reports stop being modal | UI | todo |
@@ -939,7 +940,17 @@ permanent benchmark" has no code path behind it.
 Evidence for these is in the review screenshots: synthetic export,
 1500×900 and 1280×720.
 
-**A7 — Spot IDs on the map and in the datum dialog**
+**A7 — Spot IDs on the map and in the datum dialog** ✅
+- **Done:** `views.spot_markers` returns objects (`x`, `y`, `station`,
+  `kind`, `rod`, `date`), merging a FEATURE_POINTS copy with the layer copy
+  that has the attributes. `map2d.js` labels squares with the station below
+  0.12 m/px and adds kind, rod and date below 0.04 m/px (decluttered).
+  `AppState.spot_choices()` → `tie_form(..., choices)` gives each station a
+  label ("lawn · rod 45.5 in · 2026-08-27", or "2 readings"); the datum
+  dialog's datalist shows them (`form.points` kept). Tests:
+  `test_web_api.py::test_spot_markers_say_what_they_are`,
+  `::test_the_datum_picker_describes_each_station`,
+  `test_web_browser.py::test_spot_labels_appear_when_zoomed_in`.
 - **What:** spot markers carry their station/ID, kind, rod reading and date
   (`views.spot_markers` returns objects). `map2d.js` shows zoom-dependent
   labels. The datum picker (`dialogs.js`) lists each station with its kind,

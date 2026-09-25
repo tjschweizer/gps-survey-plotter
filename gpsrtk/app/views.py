@@ -26,6 +26,7 @@ import io
 import struct
 
 import numpy as np
+import pandas as pd
 
 from ..model.pointset import E, N, Z, ELEV, FIX, SPEED, SESSION
 from .palette import COLORMAPS, colorize
@@ -190,28 +191,45 @@ def points_note(state) -> str:
     return note
 
 
-def spot_markers(state) -> list[list[float]]:
-    """Spot layers drawn as distinct markers, not part of the surface."""
-    seen: set[tuple[float, float]] = set()
-    xs, ys = [], []
+def spot_markers(state) -> list[dict]:
+    """Spot layers drawn as distinct markers, not part of the surface.
+
+    Each marker says which station it is - the ID the datum dialog asks for
+    - with its kind, rod reading and date, so a shot can be found on the map
+    and picked by what it is rather than by a number remembered from the
+    phone.
+    """
+    from ..model.pointset import KIND, ROD_IN, TIME
+    from ..vertical import stations
+
+    markers: dict[tuple[float, float], dict] = {}
+    marks = state.site.mark_names
     for name, ps in state.layers.items():
         if name == state.active_layer or not state.visible.get(name):
             continue
         if len(ps) == 0 or len(ps) > MAX_SPOT_LAYER:
             continue
-        for e, n in zip(ps.df[E].to_numpy(), ps.df[N].to_numpy()):
+        d = ps.df
+        keys = stations(ps, marks)
+        for i in d.index:
+            e, n = float(d[E].at[i]), float(d[N].at[i])
             # FEATURE_POINTS repeats every spot layer's rows, so the same
-            # shot would otherwise be drawn twice.
-            key = (round(float(e), 3), round(float(n), 3))
-            if key in seen:
-                continue
-            seen.add(key)
-            xs.append(e)
-            ys.append(n)
-    if not xs:
-        return []
-    lx, ly = state.site.to_local(np.array(xs), np.array(ys))
-    return [[float(a), float(b)] for a, b in zip(lx, ly)]
+            # shot would otherwise be drawn twice; the copy with the custom
+            # attributes fills in what the other lacks.
+            key = (round(e, 3), round(n, 3))
+            m = markers.setdefault(key, {"e": e, "n": n, "station": str(keys.at[i]),
+                                         "kind": "", "rod": None, "date": ""})
+            if not m["kind"] and KIND in d.columns and isinstance(d[KIND].at[i], str):
+                m["kind"] = d[KIND].at[i]
+            if m["rod"] is None and ROD_IN in d.columns and pd.notna(d[ROD_IN].at[i]):
+                m["rod"] = float(d[ROD_IN].at[i])
+            if not m["date"] and TIME in d.columns and pd.notna(d[TIME].at[i]):
+                m["date"] = f"{d[TIME].at[i]:%Y-%m-%d}"
+    out = []
+    for m in markers.values():
+        x, y = state.site.to_local(m.pop("e"), m.pop("n"))
+        out.append({"x": float(x), "y": float(y), **m})
+    return out
 
 
 def vector_lines(state) -> list[dict]:

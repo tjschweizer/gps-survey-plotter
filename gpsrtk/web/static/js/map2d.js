@@ -157,17 +157,36 @@ function arrowFeature([x, y, de, dn], length) {
   return feature;
 }
 
+// SW Maps shots: a square each, labelled with the station the datum dialog
+// asks for once zoomed in far enough to read it, and with the rod reading
+// and date closer still.
 const markerSource = new ol.source.Vector();
-const markerLayer = new ol.layer.Vector({
-  source: markerSource,
-  zIndex: 130,
-  style: new ol.style.Style({
-    image: new ol.style.RegularShape({
-      points: 4, radius: 7.5, angle: Math.PI / 4,
-      fill: new ol.style.Fill({ color: "rgba(255,60,60,0.86)" }),
-      stroke: new ol.style.Stroke({ color: "#000", width: 1 }),
+const spotSquare = new ol.style.RegularShape({
+  points: 4, radius: 7.5, angle: Math.PI / 4,
+  fill: new ol.style.Fill({ color: "rgba(255,60,60,0.86)" }),
+  stroke: new ol.style.Stroke({ color: "#000", width: 1 }),
+});
+const SPOT_LABEL_RES = 0.12;       // metres per pixel: the station
+const SPOT_DETAIL_RES = 0.04;      // ...and the kind, rod reading and date
+function spotStyle(feature, resolution) {
+  if (resolution > SPOT_LABEL_RES) return new ol.style.Style({ image: spotSquare });
+  const s = feature.get("spot");
+  let text = s.station;
+  if (resolution <= SPOT_DETAIL_RES) {
+    const bits = [s.kind, s.rod == null ? null : `${s.rod} in`, s.date].filter(Boolean);
+    if (bits.length) text += `\n${bits.join(" · ")}`;
+  }
+  return new ol.style.Style({
+    image: spotSquare,
+    text: new ol.style.Text({
+      text, offsetY: -16, textBaseline: "bottom", font: "600 11px system-ui, sans-serif",
+      fill: new ol.style.Fill({ color: "#5a0000" }),
+      stroke: new ol.style.Stroke({ color: "rgba(255,255,255,0.9)", width: 3 }),
     }),
-  }),
+  });
+}
+const markerLayer = new ol.layer.Vector({
+  source: markerSource, zIndex: 130, style: spotStyle, declutter: true,
 });
 map.addLayer(markerLayer);
 
@@ -275,7 +294,9 @@ async function syncFeatures(state) {
   featuresKey = key;
   const { markers, vectors } = await getJSON("/api/features");
   markerSource.clear(true);
-  markerSource.addFeatures(markers.map((xy) => new ol.Feature(new ol.geom.Point(xy))));
+  markerSource.addFeatures(markers.map((m) => new ol.Feature({
+    geometry: new ol.geom.Point([m.x, m.y]), spot: m,
+  })));
   vectorSource.clear(true);
   vectorSource.addFeatures(vectors.map((v) => new ol.Feature(new ol.geom.LineString(v.xy))));
 }

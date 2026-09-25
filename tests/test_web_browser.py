@@ -593,3 +593,18 @@ def test_tie_transects_are_drawn_but_not_listed(page, live):
     assert page.locator("#plan-table .tabulator-row").count() == 0
     kinds = page.evaluate("() => window.yardsurvey.store.state.plan.lines.map((l) => l.kind)")
     assert kinds == ["transect"] * 4
+
+
+def test_spot_labels_appear_when_zoomed_in(page, live):
+    """The red squares say which station they are once they can be read."""
+    labels = page.evaluate("""() => {
+        const map = window.yardsurvey.map;
+        const layer = map.getLayers().getArray().find((l) => l.getZIndex() === 130);
+        const f = layer.getSource().getFeatures()[0];
+        const style = layer.getStyle();
+        return [style(f, 1.0).getText(), style(f, 0.1).getText()?.getText(),
+                style(f, 0.02).getText()?.getText()];
+    }""")
+    assert labels[0] is None
+    assert labels[1].isdigit()
+    assert "lawn" in labels[2] and " in" in labels[2] and "2026-08-27" in labels[2]

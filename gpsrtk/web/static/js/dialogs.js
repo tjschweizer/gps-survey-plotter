@@ -250,7 +250,11 @@ export function controlMarksDialog(form) {
 
 export function datumDialog(form) {
   const point = h("input", { type: "text", value: String(form.point), list: "datum-points" });
-  const points = h("datalist", { id: "datum-points" }, form.points.map((p) => h("option", { value: String(p) })));
+  // Each option carries what the station is, so a number can be picked by
+  // what was shot there rather than remembered from the phone.
+  const choices = form.choices?.length ? form.choices : form.points.map((p) => ({ point: p, label: "" }));
+  const points = h("datalist", { id: "datum-points" },
+    choices.map((c) => h("option", { value: String(c.point), label: c.label || undefined })));
   const elev = h("input", { type: "number", step: "0.0001", value: String(form.elev_ft) });
   const note = h("input", { type: "text", value: form.note, placeholder: "garage slab at the overhead door, say" });
   const frame = h("input", { type: "text", value: form.frame });

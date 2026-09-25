@@ -1129,6 +1129,39 @@ class AppState:
         shot = spots.df[ROD_IN].notna()
         return sort_stations(stations(spots, self.site.mark_names)[shot])
 
+    def spot_choices(self) -> list[dict]:
+        """Every station a benchmark can be, with what it is: kind, rod
+        reading(s) and date, for the datum dialog's picker."""
+        import pandas as pd
+
+        from ..model.pointset import KIND, ROD_IN, TIME
+        from ..vertical import stations
+
+        spots = self.spots
+        if spots is None or ROD_IN not in spots.df.columns:
+            return []
+        d = spots.df[spots.df[ROD_IN].notna()]
+        keys = stations(spots, self.site.mark_names)[d.index]
+        found: dict = {}
+        for i in d.index:
+            entry = found.setdefault(keys.at[i], {"kinds": [], "rods": [], "dates": []})
+            if KIND in d.columns and isinstance(d[KIND].at[i], str):
+                entry["kinds"].append(d[KIND].at[i])
+            entry["rods"].append(float(d[ROD_IN].at[i]))
+            if TIME in d.columns and pd.notna(d[TIME].at[i]):
+                entry["dates"].append(f"{d[TIME].at[i]:%Y-%m-%d}")
+        out = []
+        for key in self.spot_ids():
+            entry = found[key]
+            rods = entry["rods"]
+            bits = [entry["kinds"][0] if entry["kinds"] else "no kind",
+                    f"rod {rods[0]:g} in" if len(rods) == 1
+                    else f"{len(rods)} readings"]
+            if entry["dates"]:
+                bits.append(min(entry["dates"]))
+            out.append({"point": key, "label": " · ".join(bits)})
+        return out
+
     def set_datum_tie(self, *, point, elev_ft: float, note: str = "",
                       frame: str = "", tied: bool = False
                       ) -> VerticalModel | None:

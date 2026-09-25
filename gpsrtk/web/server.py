@@ -464,7 +464,7 @@ def create_app(state: AppState | None = None, *, vector_providers=None,
     @app.get("/api/datum")
     def get_datum():
         with srv.acting():
-            return _json(tie_form(st.site, st.spot_ids()))
+            return _json(tie_form(st.site, st.spot_ids(), st.spot_choices()))
 
     # --- File ------------------------------------------------------------
 

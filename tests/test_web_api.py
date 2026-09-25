@@ -222,6 +222,24 @@ def test_features_carry_spot_markers_once_each(client):
     assert len(markers) == 12          # 14 shots of 12 distinct points
 
 
+def test_spot_markers_say_what_they_are(client, state):
+    """The datum dialog asks for an ID; the map's squares used to carry none."""
+    markers = client.get("/api/features").json()["markers"]
+    one = next(m for m in markers if m["station"] == "1")
+    spots = state.layers["spots"].df
+    assert one["kind"] == "lawn" and one["date"] == "2026-08-27"
+    assert one["rod"] == pytest.approx(spots.loc[spots["point_id"] == 1, "rod_in"].iloc[0])
+    assert {m["station"] for m in markers} == {str(k) for k in range(1, 13)}
+
+
+def test_the_datum_picker_describes_each_station(client):
+    choices = client.get("/api/datum").json()["choices"]
+    assert [c["point"] for c in choices] == list(range(1, 13))
+    seven = next(c for c in choices if c["point"] == 7)
+    assert seven["label"] == "lawn · 2 readings · 2026-08-27"
+    assert next(c for c in choices if c["point"] == 1)["label"].startswith("lawn · rod ")
+
+
 # --- the busy state always clears ------------------------------------------------------
 #
 # The desktop app's wait cursor was a stack, and an unbalanced push left an

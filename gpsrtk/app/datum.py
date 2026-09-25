@@ -49,13 +49,16 @@ def control_form(site) -> dict:
     }
 
 
-def tie_form(site, spot_ids: list) -> dict:
+def tie_form(site, spot_ids: list, choices: list | None = None) -> dict:
     """What the datum tie dialog shows."""
     v = site.vertical
     return {
         "help": HELP,
         "point": v.benchmark_point_id,
         "points": list(spot_ids),
+        # Each station with its kind, rod reading and date, so the picker
+        # says what a number is.
+        "choices": list(choices or []),
         "elev_ft": v.benchmark_elev_ft,
         "note": v.benchmark_note,
         "frame": v.model_frame or "Revit project",
