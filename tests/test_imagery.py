@@ -196,3 +196,23 @@ def test_blank_tile_detection_uses_distinct_values_not_variance(monkeypatch):
     monkeypatch.setattr(requests, "get", serve(dem))
     layer = provider.fetch(EXT, 32615, size=32)
     assert layer.image.std() < 3.0, "this fixture is deliberately low contrast"
+
+
+def test_network_tests_stay_off_under_any_other_mark_expression():
+    """Any -m replaces pyproject's `-m 'not network'`, so `-m "not
+    browser"` used to hit live services. They now run only when asked for."""
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    env = {k: v for k, v in os.environ.items() if k != "YARDSURVEY_NETWORK"}
+    env["PYTHONPATH"] = str(root)
+    run = subprocess.run(
+        [sys.executable, "-m", "pytest", str(Path(__file__)), "-m", "not browser",
+         "-k", "provider_returns or parcels_come_back or geoid_service",
+         "-q", "-p", "no:cacheprovider", "-p", "no:warnings"],
+        capture_output=True, text=True, cwd=root, env=env, timeout=120)
+    assert "5 skipped" in run.stdout, run.stdout[-800:]
+    assert "passed" not in run.stdout and "failed" not in run.stdout

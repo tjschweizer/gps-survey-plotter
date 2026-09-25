@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import pytest
@@ -6,6 +7,25 @@ from gpsrtk.io import read_any
 from gpsrtk.site import example_site
 
 ZIP = Path(__file__).resolve().parents[1] / "archive" / "Project 1.zip"
+
+
+def pytest_collection_modifyitems(config, items):
+    """Network tests stay off unless they are asked for.
+
+    pyproject's `addopts` deselects them with `-m 'not network'`, but any
+    `-m` on the command line replaces that - so `-m "not browser"` quietly
+    selected every test that hits a live service. They run only when the
+    `-m` expression names `network`, or YARDSURVEY_NETWORK=1 is set.
+    """
+    if "network" in (config.getoption("markexpr") or ""):
+        return
+    if os.environ.get("YARDSURVEY_NETWORK") == "1":
+        return
+    skip = pytest.mark.skip(reason="network tests are opt-in: -m network, "
+                                   "or YARDSURVEY_NETWORK=1")
+    for item in items:
+        if item.get_closest_marker("network") is not None:
+            item.add_marker(skip)
 
 
 @pytest.fixture(scope="session")

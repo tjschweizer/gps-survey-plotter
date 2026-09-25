@@ -81,9 +81,10 @@ These were set by the owner and apply to every item.
   `YARDSURVEY_CHROMIUM` to a Chromium binary. Without either they skip. In the
   cloud review sandbox they ran with
   `YARDSURVEY_CHROMIUM=/opt/pw-browsers/chromium-1194/chrome-linux/chrome`.
-- **Network tests.** `uv run pytest -m "not browser"` currently also selects
-  the network tests, because any `-m` replaces the `addopts` default (R24).
-  C31 fixes this.
+- **Network tests.** Any `-m` replaces the `addopts` default (R24), so
+  `-m "not browser"` used to select the network tests too. Since C31 they
+  are skipped unless the `-m` expression names `network` or
+  `YARDSURVEY_NETWORK=1` is set.
 
 ### Test counts
 
@@ -220,8 +221,8 @@ These answers change the designs in section 5.
 | 38 | C26 | .gitignore covers exports | code health | ✅ `757b32b` |
 | 39 | C27 | Atomic saves | code health | ✅ `aedcc88` |
 | 40 | C28 | Server hardening | code health | ✅ `ef50afd` |
-| 41 | C30 | Hide the do-nothing surface-residual stage | code health | ✅ |
-| 42 | C31 | Network tests stay off under any `-m` | code health | todo |
+| 41 | C30 | Hide the do-nothing surface-residual stage | code health | ✅ `8b8804d` |
+| 42 | C31 | Network tests stay off under any `-m` | code health | ✅ |
 | 43 | C32 | CLAUDE.md: rover is PX4, plus the A9 note | docs | todo |
 | — | A9 | Rover mission export | workflow | **deferred** (section 7) |
 
@@ -1332,7 +1333,13 @@ Evidence for these is in the review screenshots: synthetic export,
   (`threshold.py:129-139`).
 - **Breaking?:** no.
 
-**C31 — Network tests stay off under any `-m`**
+**C31 — Network tests stay off under any `-m`** ✅
+- **Done:** `tests/conftest.py` `pytest_collection_modifyitems` skips every
+  test with the `network` marker unless the `-m` expression contains
+  "network" or `YARDSURVEY_NETWORK=1`. `-m "not browser"` now reports the 5
+  network tests as skipped; the default still deselects them; `-m network`
+  selects them. Test (runs pytest in a subprocess):
+  `test_imagery.py::test_network_tests_stay_off_under_any_other_mark_expression`.
 - **What:** a `tests/conftest.py` `pytest_collection_modifyitems` hook skips
   `network` tests unless the `-m` expression names `network`, or
   `YARDSURVEY_NETWORK=1` is set.
