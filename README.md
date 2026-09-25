@@ -381,6 +381,37 @@ shot 1 (`P1`) and SW Maps record 1 are different points, and the benchmark in
 **Datum ▸ Datum tie…** can be a SW Maps ID (`12`), a planned shot (`P12`) or a
 mark (`BM1`). The field sheet prints the same convention.
 
+## Control marks and check shots
+
+Overlap is the only other thing that ties one outing's heights to another's,
+and an outing without it cannot be recovered. A permanent mark removes that
+dependence. Declare the marks in **Datum ▸ Control marks…** (a name, and
+optionally the elevation it is held at and a note), then:
+
+- set 2–3 permanent marks, such as mag nails or rebar, **outside the mowed
+  area**;
+- shoot a mark with the **fixed-height pole** at the **start and end of every
+  outing**, recorded in SW Maps under the mark's name (`BM1`);
+- read the rod on `BM1` from **every laser setup**, at the open and the close;
+- tie one mark to the Revit model's garage slab or door threshold, once.
+
+A SW Maps record whose station is a mark name is a **check shot**. It belongs
+to the track session nearest in time in the same export, within an hour. Two
+sessions that shot the same mark are tied directly - the pole is the same
+height every time, so the difference in their heights is the difference
+between the sessions - which makes a session linked only through a mark
+reconcilable in the merge report. The Sessions panel gives each session's
+start and end check residuals and the drift between them, after its solved
+offset ("checks: BM1 start +0.4 cm, end −0.8 cm"), and flags anything over
+3 cm: a mount that shifted, or an overlap that says something the marks do
+not. A rod reading on a mark enters the level network as that station, so
+the benchmark in **Datum ▸ Datum tie…** can be `BM1`. The field sheet prints
+this routine in a box at the top.
+
+Marks are part of the site, so they travel in the project file. That made
+it format version 3; an older build refuses a version 3 project with its
+"newer version" message rather than silently dropping the marks.
+
 ## Imagery and reference linework
 
 Providers are health-checked before use, because public GIS services go down.

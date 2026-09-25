@@ -102,6 +102,30 @@ class VerticalDatum:
 
 
 @dataclass
+class ControlMark:
+    """A permanent mark - a mag nail, a rebar - set outside the mowed area.
+
+    Shot with the fixed-height pole at the start and end of every outing, it
+    ties that outing's heights to every other outing that shot it, whether
+    or not their ground overlaps; read with the rod from every laser setup,
+    it closes the setup and can hold the datum. `elev_ft` is the elevation
+    it is held at on the local datum, when one has been assigned; it is
+    recorded here for reference.
+    """
+
+    name: str
+    elev_ft: float | None = None
+    note: str = ""
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "ControlMark":
+        elev = d.get("elev_ft")
+        return cls(name=str(d["name"]).strip().upper(),
+                   elev_ft=None if elev is None else float(elev),
+                   note=str(d.get("note") or ""))
+
+
+@dataclass
 class Site:
     name: str
     epsg: int
@@ -110,6 +134,11 @@ class Site:
     vertical: VerticalDatum = field(default_factory=VerticalDatum)
     surface: SurfaceDefaults = field(default_factory=SurfaceDefaults)
     notes: str = ""
+    control: list[ControlMark] = field(default_factory=list)
+
+    @property
+    def mark_names(self) -> list[str]:
+        return [m.name for m in self.control]
 
     # --- construction ----------------------------------------------------
 
@@ -185,6 +214,8 @@ class Site:
         if "despike_percentiles" in sd:
             sd["despike_percentiles"] = tuple(sd["despike_percentiles"])
         d["surface"] = SurfaceDefaults(**sd)
+        # Sites written before control marks existed have no key at all.
+        d["control"] = [ControlMark.from_dict(m) for m in d.get("control") or []]
         return cls(**d)
 
     def save(self, path: str | Path) -> None:

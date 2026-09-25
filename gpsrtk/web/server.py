@@ -55,7 +55,7 @@ from ..app import AppState
 from ..app import chain_edit as CE
 from ..app import plan_edit as PE
 from ..app import report, views
-from ..app.datum import tie_form
+from ..app.datum import control_form, tie_form
 from ..app.sessions import sessions_payload
 from ..io.imagery import NoCoverageError
 from ..io.vector import default_vector_providers
@@ -441,6 +441,24 @@ def create_app(state: AppState | None = None, *, vector_providers=None,
             return _json(files.listing(start, [e for e in exts.split(",") if e]))
         except ValueError as exc:
             raise UserError("Browse", str(exc), "warning") from exc
+
+    @app.get("/api/control")
+    def get_control():
+        with srv.acting():
+            return _json(control_form(st.site))
+
+    @app.post("/api/control")
+    def set_control(body: dict = Body(...)):
+        with srv.acting("Saving control marks…"):
+            try:
+                model = st.set_control_marks(body.get("marks") or [])
+            except (ValueError, KeyError, TypeError) as exc:
+                raise UserError("Control marks", str(exc), "warning") from exc
+            if model is not None:
+                return srv.reply(notice(f"Vertical model ({model.mode})",
+                                        report.solve_notice(model),
+                                        monospace=True))
+            return srv.reply()
 
     @app.get("/api/datum")
     def get_datum():
@@ -1002,6 +1020,7 @@ def create_app(state: AppState | None = None, *, vector_providers=None,
                 out = write_field_sheet(
                     st.plan, Path(tmp) / "field_sheet.html", basemap=basemap,
                     site=st.site, title=f"{st.site.name} — shot plan",
+                    marks=st.site.mark_names,
                     imagery_offset=(st.imagery_offset.de,
                                     st.imagery_offset.dn))
                 data = out.read_bytes()

@@ -206,6 +206,46 @@ export function fileDialog({ title, mode = "open", filters = FILTERS.export,
     });
 }
 
+// --- control marks --------------------------------------------------------------
+
+export function controlMarksDialog(form) {
+  const rows = h("tbody", {});
+  const addRow = (m = { name: "", elev_ft: null, note: "" }) => {
+    const tr = h("tr", {},
+      h("td", {}, h("input", { type: "text", value: m.name, placeholder: "BM1",
+                              "aria-label": "Mark name", size: 6 })),
+      h("td", {}, h("input", { type: "number", step: "0.001",
+                              value: m.elev_ft == null ? "" : String(m.elev_ft),
+                              "aria-label": "Held elevation (ft)" })),
+      h("td", {}, h("input", { type: "text", value: m.note, placeholder: "mag nail in the curb",
+                              "aria-label": "Note" })),
+      h("td", {}, h("button", { type: "button", class: "icon", title: "Remove this mark",
+                               onclick: () => tr.remove() }, "✕")));
+    rows.append(tr);
+    return tr;
+  };
+  form.marks.forEach((m) => addRow(m));
+  if (!form.marks.length) addRow();
+
+  const body = h("div", { class: "dlg-body form", style: { maxWidth: "560px" } },
+    h("div", { class: "muted", style: { whiteSpace: "pre-wrap" } }, form.help),
+    h("table", { class: "marks" },
+      h("thead", {}, h("tr", {}, h("th", {}, "Name"), h("th", {}, "Held elev. (ft)"),
+                       h("th", {}, "Note"), h("th", {}))),
+      rows),
+    h("button", { type: "button", onclick: () => addRow().querySelector("input").focus() },
+      "Add mark"));
+
+  return modal("", "Control marks", body,
+    [{ label: "Cancel", value: null }, { label: "OK", value: "ok", primary: true }],
+    { onOpen: () => rows.querySelector("input")?.focus() })
+    .then((value) => value === "ok" ? [...rows.querySelectorAll("tr")].map((tr) => {
+      const [name, elev, note] = tr.querySelectorAll("input");
+      return { name: name.value.trim(), elev_ft: elev.value === "" ? null : Number(elev.value),
+               note: note.value };
+    }).filter((m) => m.name) : null);
+}
+
 // --- the datum tie --------------------------------------------------------------
 
 export function datumDialog(form) {

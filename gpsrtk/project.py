@@ -36,7 +36,9 @@ from pathlib import Path
 
 from .site import Site
 
-VERSION = 2
+# 3: the site gained control marks (A3). A version 2 build refuses a
+# version 3 file with its "newer version" message rather than dropping them.
+VERSION = 3
 SUFFIX = ".yardproj"
 
 

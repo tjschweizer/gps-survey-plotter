@@ -47,6 +47,8 @@ function spec(providers) {
     { label: "Datum", items: [
       { label: "Datum tie…", run: A.datumTie,
         tip: "Which shot the survey hangs from, and at what elevation" },
+      { label: "Control marks…", run: A.controlMarks,
+        tip: "Permanent marks shot at the start and end of every outing" },
       "-",
       { label: "Solve local datum", run: () => A.solveVertical("local"),
         tip: "Tie the walked data to the laser spots" },

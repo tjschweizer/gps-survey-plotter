@@ -23,6 +23,7 @@ from __future__ import annotations
 from .. import qc
 from ..merge import describe_sessions
 from ..model.pointset import ELEV, SESSION, Z
+from ..vertical import check_residuals, describe_checks
 from .views import session_palette
 
 
@@ -54,6 +55,8 @@ def sessions_payload(state) -> dict:
     kept = (corrected.df[SESSION].astype(str).value_counts().to_dict()
             if corrected is not None and SESSION in corrected.df.columns else {})
     offsets = dict(state.vertical.offsets or {}) if state.vertical is not None else {}
+    reference = state.vertical.reference_session if state.vertical is not None else ""
+    checks = check_residuals(state.check_shots(), offsets, reference)
     palette = session_palette(names)
     hidden = state.hiding
 
@@ -80,6 +83,9 @@ def sessions_payload(state) -> dict:
             "median_cm": _cm(within, "median_abs"),
             "offset_cm": (offsets[info.name] * 100.0 if info.name in offsets
                           else None),
+            "checks": (describe_checks(checks.get(info.name))
+                       if state.site.control else None),
+            "checks_flagged": bool(checks.get(info.name, {}).get("flagged")),
         })
 
     pairs = []

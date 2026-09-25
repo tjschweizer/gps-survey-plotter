@@ -50,6 +50,10 @@ from ..surface import Extent, Surface, build_surface
 from ..vertical import VerticalModel
 from .events import Signal
 
+# A check shot belongs to the track session nearest in time, if one is this
+# close: an outing's start and end shots bracket its passes.
+CHECK_WINDOW_S = 60 * 60.0
+
 PREVIEW_SIZE = 320
 EXPORT_SIZE = 1024
 FIGURE_CELL_M = 0.08
@@ -288,6 +292,7 @@ class AppState:
             report.unlinked = diagnosis.unlinked
             report.thin = diagnosis.thin
             report.static_shots = diagnosis.static_shots
+            report.check_shots = diagnosis.check_shots
         return report
 
     def add_export(self, path: str | Path) -> MergeReport:
@@ -334,9 +339,88 @@ class AppState:
             # would otherwise be listed as a session that overlaps nothing.
             lawn = KindSelect(names=["lawn"]).apply(
                 spots.select(spots.df[Z].notna().to_numpy(), "has z"))
+        checks = self.check_shots()
         if lawn is None or not len(lawn):
-            return diagnose(source, overlap=basis)
-        return diagnose(concat([source, lawn]), overlap=concat([basis, lawn]))
+            return diagnose(source, overlap=basis, checks=checks)
+        return diagnose(concat([source, lawn]), overlap=concat([basis, lawn]),
+                        checks=checks)
+
+    def check_shots(self):
+        """Check shots on control marks, each given the session it checks.
+
+        A SW Maps record whose station is a control mark is a check shot. It
+        belongs to the track session nearest in time within the same export
+        (by the session name's export prefix), if one is within
+        `CHECK_WINDOW_S`: the start and end shots of an outing bracket its
+        passes. Returns a frame of `mark`, `session`, `z`, `time`.
+        """
+        import pandas as pd
+
+        from ..merge import describe_sessions
+        from ..model.pointset import TIME, Z
+        from ..vertical import stations
+
+        columns = ["mark", "session", "z", "time"]
+        marks = set(self.site.mark_names)
+        source = self.source
+        if not marks or source is None:
+            return pd.DataFrame(columns=columns)
+        tracks = [s for s in describe_sessions(source)
+                  if s.start is not None and s.end is not None]
+        rows = []
+        for name, ps in self.layers.items():
+            if name in (self.active_layer, self.PLAN_LAYER):
+                continue
+            d = ps.df
+            if not {Z, TIME, SESSION}.issubset(d.columns):
+                continue
+            keys = stations(ps, marks)
+            on_mark = (keys.isin(marks) & d[Z].notna() & d[TIME].notna()).to_numpy()
+            for i in d.index[on_mark]:
+                t = d[TIME].at[i]
+                export = str(d[SESSION].at[i]).rsplit("/", 1)[0]
+                best, gap = None, None
+                for s in tracks:
+                    if s.name.rsplit("/", 1)[0] != export:
+                        continue
+                    g = (0.0 if s.start <= t <= s.end else
+                         min(abs((t - s.start).total_seconds()),
+                             abs((t - s.end).total_seconds())))
+                    if gap is None or g < gap:
+                        best, gap = s.name, g
+                if best is not None and gap <= CHECK_WINDOW_S:
+                    rows.append({"mark": keys.at[i], "session": best,
+                                 "z": float(d[Z].at[i]), "time": t})
+        return pd.DataFrame(rows, columns=columns)
+
+    def set_control_marks(self, marks) -> VerticalModel | None:
+        """Replace the site's control marks.
+
+        Marks change which records are check shots and which rod readings
+        share a station, so a solved model is re-solved.
+        """
+        from ..site import ControlMark
+
+        cleaned, seen = [], set()
+        for m in marks:
+            mark = m if isinstance(m, ControlMark) else ControlMark.from_dict(m)
+            if not mark.name:
+                continue
+            if mark.name in seen:
+                raise ValueError(f"control mark {mark.name} is listed twice")
+            if mark.name.isdigit() or mark.name.startswith("P") and mark.name[1:].isdigit():
+                raise ValueError(
+                    f"'{mark.name}' cannot be a mark name: numbers are SW Maps "
+                    "IDs and P<number> is a planned shot")
+            seen.add(mark.name)
+            cleaned.append(mark)
+        self.site.control = cleaned
+        self.siteChanged.emit()
+        self.sessionsChanged.emit()
+        if self.vertical is not None:
+            return self.solve_vertical(self.vertical.mode)
+        self.verticalChanged.emit()
+        return None
 
     # --- pipeline --------------------------------------------------------
 
@@ -613,6 +697,8 @@ class AppState:
         v = self.site.vertical
         kw.setdefault("benchmark_id", v.benchmark_point_id)
         kw.setdefault("benchmark_elev_ft", v.benchmark_elev_ft)
+        kw.setdefault("marks", self.site.mark_names)
+        kw.setdefault("checks", self.check_shots())
         model = V.solve_vertical(self.filtered, self.spots, mode=mode,
                                  geoid=geoid, tied_to_model=v.tied_to_model,
                                  model_frame=v.model_frame, **kw)
@@ -991,7 +1077,7 @@ class AppState:
         if spots is None or ROD_IN not in spots.df.columns:
             return []
         shot = spots.df[ROD_IN].notna()
-        return sort_stations(stations(spots)[shot])
+        return sort_stations(stations(spots, self.site.mark_names)[shot])
 
     def set_datum_tie(self, *, point, elev_ft: float, note: str = "",
                       frame: str = "", tied: bool = False

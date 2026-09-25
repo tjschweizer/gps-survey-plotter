@@ -106,6 +106,7 @@ These were set by the owner and apply to every item.
 | After A6 | 381 passed, 51 skipped, 40 deselected | 35 passed |
 | After A2 | 386 passed, 51 skipped, 40 deselected | 35 passed |
 | After A4 | 391 passed, 51 skipped, 40 deselected | 35 passed |
+| After A3 | 403 passed, 51 skipped, 40 deselected | 36 passed |
 
 Of the 55 skips, 50 need real data. The other 5 are network tests that the
 sandbox proxy refused.
@@ -176,8 +177,8 @@ These answers change the designs in section 5.
 | 15 | C3 | Heights labelled by vertical model | processing | ✅ `6a8f32f` |
 | 16 | A6 | Source fingerprints | code health | ✅ `af97773` |
 | 17 | A2 | Fill plan shots from SW Maps records by station | workflow | ✅ `ea97af3` |
-| 18 | A4 | Per-setup level closure and laser check | workflow | ✅ |
-| 19 | A3 | Control marks and start/end check shots | workflow | todo (**format v3**) |
+| 18 | A4 | Per-setup level closure and laser check | workflow | ✅ `7d29d7b` |
+| 19 | A3 | Control marks and start/end check shots | workflow | ✅ (**format v3**) |
 | 20 | A5 | Tie transects | workflow | todo |
 | 21 | A1 | Laser terrain shots in the surface (and the Revit file) | processing | todo |
 | 22 | A7 | Spot IDs on the map and in the datum dialog | UI | todo |
@@ -779,6 +780,37 @@ follow it in SW Maps:
 
 **A3 — Control marks and start/end check shots** (project format v3;
 approved)
+
+✅ *Done.* `site.ControlMark` (name upper-cased, optional `elev_ft`, note;
+the held elevation is stored and shown, nothing uses it yet) and
+`Site.control` / `Site.mark_names`; `Site.from_dict` accepts no `control`
+key. `project.VERSION` = 3. `AppState.check_shots()` finds records whose
+station (with marks) is a mark and gives each the nearest track session of
+the same export (session-name prefix) within `CHECK_WINDOW_S` = 60 min.
+`merge.overlap_observations(checks=)` adds one "mark" observation per mark
+and pair of sessions (median heights); `diagnose(checks=)` counts them,
+reports `check_shots`, and never calls a mark-tied pair "thin".
+`solve_vertical`/`session_offsets` take `marks=` and `checks=`;
+`AppState.solve_vertical`, `spot_ids` and `session_report` pass the site's.
+`vertical.check_residuals` (the mark height comes from the reference
+session, else the earliest session that shot it, so a shifted mount shows
+its whole disagreement) and `describe_checks` ("checks: BM1 start +0.4 cm,
+end -0.8 cm, drift ..." / "no check shots", flag over
+`CHECK_TOLERANCE_M` = 3 cm); in `SessionOffsets.checks` and its describe,
+and in the Sessions panel (`sessions_payload` rows `checks`,
+`checks_flagged`; shown only when marks exist). `AppState.set_control_marks`
+refuses duplicates and names that are already stations (digits, `P<n>`)
+and re-solves a solved model. UI: `GET/POST /api/control`, "Datum ▸
+Control marks…" (`controlMarksDialog`, `actions.controlMarks`). Field
+sheet: a "Control marks and check shots" box above the map
+(`write_field_sheet(marks=)`). README: new section "Control marks and check
+shots". Tests: new `tests/test_control.py` (the Elsewhere outing tied and
+its 4 cm recovered, unreconcilable without checks, a shifted mount flagged,
+"no check shots", a shot too far in time, a rod reading on BM1 holding the
+datum and closing the setup, site round trip, a v2 project without
+`control`, format 3, name validation, the API, the field-sheet box);
+`test_project.py::test_resaving_stamps_the_current_format` now expects 3;
+`test_web_browser.py::test_control_marks_are_added_from_the_datum_menu`.
 
 *What.*
 

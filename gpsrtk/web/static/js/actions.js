@@ -3,7 +3,8 @@
 
 import { store, setPlanMode } from "./store.js";
 import { act, getJSON } from "./api.js";
-import { showNotice, confirmDialog, fileDialog, datumDialog, FILTERS } from "./dialogs.js";
+import { showNotice, confirmDialog, fileDialog, datumDialog, controlMarksDialog,
+         FILTERS } from "./dialogs.js";
 import * as map2d from "./map2d.js";
 import * as view3d from "./view3d.js";
 import { cancelLine } from "./planmap.js";
@@ -102,6 +103,12 @@ export async function datumTie() {
   const form = await getJSON("/api/datum");
   const values = await datumDialog(form);
   if (values) await act("/api/datum", values, { busy: "Tying the datum…" });
+}
+
+export async function controlMarks() {
+  const form = await getJSON("/api/control");
+  const marks = await controlMarksDialog(form);
+  if (marks) await act("/api/control", { marks }, { busy: "Saving control marks…" });
 }
 
 export const solveVertical = (mode) =>

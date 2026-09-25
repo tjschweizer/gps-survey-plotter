@@ -197,9 +197,26 @@ def _setup_blocks(plan) -> str:
     return '<div class="setups">' + "\n".join(blocks) + "</div>"
 
 
+def _control_box(marks) -> str:
+    """The control-mark routine, where it cannot be missed."""
+    names = ", ".join(html.escape(m) for m in marks) or "none set yet"
+    return (
+        '<div class="control"><b>Control marks and check shots</b> '
+        f"(marks: {names})"
+        "<ul>"
+        "<li>Shoot the mark with the <b>fixed-height pole</b> at the "
+        "<b>start and end of every outing</b>, recorded under the mark's "
+        "name (BM1).</li>"
+        "<li>Read the rod on the mark from <b>every laser setup</b>, at the "
+        "open and the close.</li>"
+        "<li>Set 2-3 marks (mag nails, rebar) outside the mowed area; tie one "
+        "to the Revit model's garage slab or door threshold, once.</li>"
+        "</ul></div>")
+
+
 def write_field_sheet(plan, path: str | Path, *, basemap=None, site=None,
                       title: str = "", note: str = "",
-                      imagery_offset=(0.0, 0.0)) -> Path:
+                      imagery_offset=(0.0, 0.0), marks=()) -> Path:
     """Write a self-contained printable sheet for a shot plan."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -249,6 +266,9 @@ def write_field_sheet(plan, path: str | Path, *, basemap=None, site=None,
   .blank.tie {{ min-width: 92px; background:
                 linear-gradient(90deg, #fff 0 33%, #ccc 33% calc(33% + 1px),
                                 #fff calc(33% + 1px) 100%); }}
+  .control {{ border: 2px solid #2b7a3d; padding: 6px 10px; margin: 0 0 12px;
+              font-size: 12px; max-width: 720px; }}
+  .control ul {{ margin: 4px 0 0 18px; padding: 0; }}
   .setups {{ display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }}
   table.setup {{ width: auto; margin-top: 0; }}
   table.setup td:first-child {{ white-space: nowrap; }}
@@ -274,6 +294,8 @@ def write_field_sheet(plan, path: str | Path, *, basemap=None, site=None,
   &middot; laser setups: {setups}
   {("&middot; " + html.escape(note)) if note else ""}
 </div>
+
+{_control_box(marks)}
 
 {_map_svg(plan, extent, uri, offset=imagery_offset)}
 

@@ -416,6 +416,7 @@ class SessionOffsets:
     reference: str
     pair_counts: dict[tuple[str, str], int] = field(default_factory=dict)
     unresolved: list[str] = field(default_factory=list)
+    checks: dict = field(default_factory=dict)   # see `check_residuals`
 
     def describe(self) -> str:
         lines = ["Session vertical offsets",
@@ -428,6 +429,8 @@ class SessionOffsets:
                          f"(+/- {se * 100:.2f}){flag}")
         for (a, b), n in sorted(self.pair_counts.items()):
             lines.append(f"  {a} <-> {b}: {n} overlap observations")
+        for name, entry in sorted(self.checks.items()):
+            lines.append(f"  {name}: {describe_checks(entry)}")
         if self.unresolved:
             lines.append(
                 "  Unresolved sessions share no overlapping ground with the "
@@ -441,7 +444,8 @@ def session_offsets(ps: PointSet, *, radius_m: float = 0.5,
                     min_seconds: float = 60.0,
                     reference: str | None = None,
                     column: str = Z,
-                    static_radius_m: float = 1.0) -> SessionOffsets:
+                    static_radius_m: float = 1.0,
+                    checks=None) -> SessionOffsets:
     """Solve one constant vertical offset per session from overlap.
 
     Observation, for a piece of ground two sessions both covered:
@@ -486,7 +490,8 @@ def session_offsets(ps: PointSet, *, radius_m: float = 0.5,
 
     obs = overlap_observations(ps, cell_m=radius_m,
                                static_radius_m=static_radius_m,
-                               min_seconds=min_seconds, column=column)
+                               min_seconds=min_seconds, column=column,
+                               checks=checks)
 
     ls = LeastSquares()
     ls.add_differences([f"OFF:{b}" for b in obs.b],
@@ -517,13 +522,69 @@ def session_offsets(ps: PointSet, *, radius_m: float = 0.5,
                 linked.add(a); changed = True
     unresolved = sorted(set(names) - linked)
 
+    offsets = {k.split(":", 1)[1]: v for k, v in adj.values.items()
+               if k.startswith("OFF:") and k.split(":", 1)[1] in names}
     return SessionOffsets(
         adjustment=adj,
-        offsets={k.split(":", 1)[1]: v for k, v in adj.values.items()
-                 if k.startswith("OFF:") and k.split(":", 1)[1] in names},
+        offsets=offsets,
         reference=reference,
         pair_counts=counts,
-        unresolved=unresolved)
+        unresolved=unresolved,
+        checks=check_residuals(checks, offsets, reference))
+
+
+CHECK_TOLERANCE_M = 0.03
+
+
+def check_residuals(checks, offsets: dict, reference: str = "") -> dict:
+    """Start and end check residuals per session, and the drift between.
+
+    A mark's height is taken from the reference session when it shot the
+    mark, otherwise from the earliest session that did (the median of its
+    shots, less its offset); every check shot's residual is its own height,
+    less its session's offset, minus that. So a session whose solved offset
+    disagrees with its check shots - a mount that shifted - shows the whole
+    disagreement, not half of it. Returns {session: {"start": (mark,
+    residual m), "end": (...), "drift": m, "flagged": bool}}.
+    """
+    out: dict = {}
+    if checks is None or not len(checks):
+        return out
+    c = checks.sort_values("time", kind="stable").copy()
+    c["corrected"] = c["z"] - c["session"].map(offsets).fillna(0.0)
+    heights = {}
+    for mark, part in c.groupby("mark", sort=False):
+        first = (reference if (part["session"] == reference).any()
+                 else part["session"].iloc[0])
+        heights[mark] = float(part.loc[part["session"] == first,
+                                       "corrected"].median())
+    c["residual"] = c["corrected"] - c["mark"].map(heights)
+    for session, part in c.groupby("session", sort=True):
+        start, end = part.iloc[0], part.iloc[-1]
+        drift = float(end["residual"] - start["residual"])
+        worst = float(part["residual"].abs().max())
+        out[str(session)] = {
+            "start": (start["mark"], float(start["residual"])),
+            "end": (end["mark"], float(end["residual"])) if len(part) > 1 else None,
+            "drift": drift if len(part) > 1 else None,
+            "shots": len(part),
+            "flagged": worst > CHECK_TOLERANCE_M or abs(drift) > CHECK_TOLERANCE_M,
+        }
+    return out
+
+
+def describe_checks(entry: dict | None) -> str:
+    """"checks: BM1 start +0.4 cm, end -0.8 cm" or "no check shots"."""
+    if not entry:
+        return "no check shots"
+    mark, r = entry["start"]
+    text = f"checks: {mark} start {r * 100:+.1f} cm"
+    if entry["end"] is not None:
+        mark, r = entry["end"]
+        text += f", end {r * 100:+.1f} cm, drift {entry['drift'] * 100:+.1f} cm"
+    if entry["flagged"]:
+        text += f"  - OVER {CHECK_TOLERANCE_M * 100:g} cm"
+    return text
 
 
 def offset_to_reference(ps: PointSet, reference: PointSet, *,
@@ -747,7 +808,7 @@ def solve_vertical(tracks: PointSet, spots: PointSet | None = None, *,
                    tied_to_model: bool = False,
                    model_frame: str = "",
                    lawn_kinds: tuple[str, ...] = ("lawn",),
-                   marks=()) -> VerticalModel:
+                   marks=(), checks=None) -> VerticalModel:
     """Work out the full vertical model from the data available.
 
     The chain, in the order the information actually flows:
@@ -797,7 +858,7 @@ def solve_vertical(tracks: PointSet, spots: PointSet | None = None, *,
         ref = str(tracks.df[SESSION].mode().iloc[0])
         model.sessions = session_offsets(combined, radius_m=radius_m,
                                          static_radius_m=static_radius_m,
-                                         reference=ref)
+                                         reference=ref, checks=checks)
         model.offsets = dict(model.sessions.offsets)
         model.reference_session = ref
         if model.sessions.unresolved:

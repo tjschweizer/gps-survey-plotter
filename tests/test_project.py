@@ -353,7 +353,7 @@ def test_resaving_stamps_the_current_format(tmp_path):
     from gpsrtk.project import VERSION
 
     saved = Project(site=example_site(), version=1).save(tmp_path / "bump.yardproj")
-    assert json.loads(saved.read_text())["version"] == VERSION == 2
+    assert json.loads(saved.read_text())["version"] == VERSION == 3
 
 
 # --- imagery alignment ----------------------------------------------------

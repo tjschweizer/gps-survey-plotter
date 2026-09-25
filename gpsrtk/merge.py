@@ -100,6 +100,7 @@ class MergeReport:
     reprojected: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     static_shots: int = 0         # static shots the overlap was judged with
+    check_shots: int = 0          # check shots on control marks
 
     @property
     def added(self) -> int:
@@ -128,6 +129,9 @@ class MergeReport:
             if self.static_shots:
                 what += (f", and {self.static_shots:,} static shots compared "
                          f"within {STATIC_RADIUS_M:g} m")
+            if self.check_shots:
+                what += (f", and {self.check_shots:,} check shots on control "
+                         "marks")
             lines += ["", f"Overlap between sessions ({what}):"]
             if self.overlaps:
                 for (a, b), count in sorted(self.overlaps.items(),
@@ -281,7 +285,7 @@ class Overlap:
     dz: np.ndarray
     real_a: np.ndarray
     real_b: np.ndarray
-    kind: np.ndarray                   # "cell" or "shot"
+    kind: np.ndarray                   # "cell", "shot" or "mark"
 
     def __len__(self) -> int:
         return len(self.dz)
@@ -299,7 +303,7 @@ class Overlap:
 def overlap_observations(ps: PointSet, *, cell_m: float = CELL_M,
                          static_radius_m: float = STATIC_RADIUS_M,
                          min_seconds: float = MIN_SECONDS,
-                         column: str = Z) -> Overlap:
+                         column: str = Z, checks=None) -> Overlap:
     """The evidence session offsets are solved from: the one definition.
 
     Moving points are compared by cell. In every `cell_m` cell (anchored at
@@ -317,18 +321,26 @@ def overlap_observations(ps: PointSet, *, cell_m: float = CELL_M,
 
     Points with no height in `column` take no part: a laser rod shot reaches
     the datum through the level network instead.
+
+    `checks`, when given, are check shots on control marks (`mark`,
+    `session`, `z`; see `AppState.check_shots`): each pair of sessions that
+    shot the same mark gives one direct observation at their median heights.
+    The pole is the same fixed height every time, so the difference is the
+    difference between the sessions. It is how an outing that shares no
+    ground with the others is tied to them.
     """
     from scipy.spatial import cKDTree
 
     empty = np.empty(0, dtype=object)
     none = Overlap(empty, empty, np.empty(0), empty, empty, empty)
+    marks = _mark_observations(checks)
     d = ps.df
     if SESSION not in d.columns or len(d) < 2:
-        return none
+        return marks or none
     if column in d.columns:
         d = d[d[column].notna()].reset_index(drop=True)
     if len(d) < 2:
-        return none
+        return marks or none
 
     real = d[SESSION].astype(str).to_numpy().astype(object)
     static = static_rows(d)
@@ -383,6 +395,9 @@ def overlap_observations(ps: PointSet, *, cell_m: float = CELL_M,
                       np.asarray(dz, dtype=float), "shot"))
 
     parts = [q for q in parts if len(q[2])]
+    if marks is not None:
+        parts.append((marks.a, marks.b, marks.dz, "mark"))
+        to_real.update({s: s for s in (*marks.a, *marks.b)})
     if not parts:
         return none
     a = np.concatenate([q[0] for q in parts])
@@ -395,10 +410,27 @@ def overlap_observations(ps: PointSet, *, cell_m: float = CELL_M,
                              for q in parts]))
 
 
+def _mark_observations(checks) -> Overlap | None:
+    """One observation per mark and pair of sessions that shot it."""
+    if checks is None or not len(checks):
+        return None
+    med = (checks.groupby(["mark", "session"], sort=True)["z"].median()
+           .reset_index())
+    both = med.merge(med, on="mark", suffixes=("_a", "_b"))
+    both = both[both["session_a"] < both["session_b"]]
+    if not len(both):
+        return None
+    a = both["session_a"].to_numpy(dtype=object)
+    b = both["session_b"].to_numpy(dtype=object)
+    return Overlap(a=a, b=b, dz=(both["z_b"] - both["z_a"]).to_numpy(dtype=float),
+                   real_a=a, real_b=b,
+                   kind=np.full(len(a), "mark", dtype=object))
+
+
 def session_overlap(ps: PointSet, *, cell_m: float = CELL_M,
                     static_radius_m: float = STATIC_RADIUS_M,
                     min_seconds: float = MIN_SECONDS,
-                    column: str = Z) -> dict[tuple[str, str], int]:
+                    column: str = Z, checks=None) -> dict[tuple[str, str], int]:
     """Count overlap observations between each pair of DIFFERENT sessions.
 
     This is exactly the evidence `vertical.session_offsets` fits its offsets
@@ -411,7 +443,7 @@ def session_overlap(ps: PointSet, *, cell_m: float = CELL_M,
     return overlap_observations(ps, cell_m=cell_m,
                                 static_radius_m=static_radius_m,
                                 min_seconds=min_seconds,
-                                column=column).counts()
+                                column=column, checks=checks).counts()
 
 
 def unlinked_sessions(names, overlaps) -> list[str]:
@@ -494,7 +526,7 @@ def instrument_height_notes(layers: dict[str, PointSet], name: str) -> list[str]
 
 
 def diagnose(ps: PointSet, *, overlap: PointSet | None = None,
-             **kw) -> MergeReport:
+             checks=None, **kw) -> MergeReport:
     """Sessions, overlaps, and what cannot be reconciled — without merging.
 
     `ps` is what was logged, and is what the sessions are described from.
@@ -505,7 +537,14 @@ def diagnose(ps: PointSet, *, overlap: PointSet | None = None,
     report.sessions = describe_sessions(ps)
     if len(report.sessions) > 1:
         basis = overlap if overlap is not None else ps
-        report.overlaps = session_overlap(basis, **kw)
+        obs = overlap_observations(basis, checks=checks, **kw)
+        report.overlaps = obs.counts()
+        report.check_shots = 0 if checks is None else len(checks)
+        # A tie through a control mark is direct, not a patch of ground that
+        # may all be one pass, so it is never "thin".
+        marked = {tuple(sorted((a, b)))
+                  for a, b, k in zip(obs.real_a, obs.real_b, obs.kind)
+                  if k == "mark"}
         column = kw.get("column", Z)
         has = (basis.df[column].notna().to_numpy() if column in basis.df.columns
                else np.ones(len(basis), dtype=bool))
@@ -513,5 +552,5 @@ def diagnose(ps: PointSet, *, overlap: PointSet | None = None,
         report.unlinked = unlinked_sessions(
             [s.name for s in report.sessions], report.overlaps)
         report.thin = [(a, b, c) for (a, b), c in sorted(report.overlaps.items())
-                       if 0 < c < THIN_OVERLAP]
+                       if 0 < c < THIN_OVERLAP and (a, b) not in marked]
     return report

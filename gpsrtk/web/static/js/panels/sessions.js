@@ -48,7 +48,11 @@ function sessionRow(s, count) {
       "repeatability ", ...repeat),
     s.offset_cm == null ? null
       : h("div", { class: "metrics", title: "The constant the vertical model removes from this session" },
-          `solved offset ${signed(s.offset_cm)} cm`));
+          `solved offset ${signed(s.offset_cm)} cm`),
+    s.checks == null ? null
+      : h("div", { class: "metrics checks" + (s.checks_flagged ? " flagged" : ""),
+                   title: "Check shots on control marks at the start and end of the outing, after its offset" },
+          s.checks));
 }
 
 function pairRow(p) {

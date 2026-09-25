@@ -29,6 +29,26 @@ TIED_NOTE = ("Exports will be labelled as tied. Only check this once the "
 LOCAL_NOTE = "Datum stays local and arbitrary. Exports will say so."
 
 
+CONTROL_HELP = (
+    "Permanent marks - a mag nail, a rebar - set outside the mowed area.\n\n"
+    "Shoot a mark with the fixed-height pole at the start and end of every "
+    "outing, recorded in SW Maps under the mark's name (BM1). Those check "
+    "shots tie the outing to every other outing that shot the mark, whether "
+    "or not their ground overlaps, and show whether the mount shifted. Read "
+    "the rod on the mark from every laser setup, at the open and the close, "
+    "and the mark can hold the datum."
+)
+
+
+def control_form(site) -> dict:
+    """What the control marks dialog shows."""
+    return {
+        "help": CONTROL_HELP,
+        "marks": [{"name": m.name, "elev_ft": m.elev_ft, "note": m.note}
+                  for m in site.control],
+    }
+
+
 def tie_form(site, spot_ids: list) -> dict:
     """What the datum tie dialog shows."""
     v = site.vertical

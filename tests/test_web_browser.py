@@ -557,3 +557,24 @@ def test_the_printed_maps_follow_the_view_settings(page):
     with page.expect_download() as info:
         page.locator("#menubar .menu:visible button.item:has-text('Slope map')").click()
     assert info.value.suggested_filename == "slope_map.png"
+
+
+def test_control_marks_are_added_from_the_datum_menu(page, live):
+    """Datum ▸ Control marks… adds a mark, which the site then carries."""
+    page.click("#menubar .menu-root > button:has-text('Datum')")
+    page.locator("#menubar .menu:visible button.item:has-text('Control marks')").click()
+    dialog = page.locator("dialog[open]")
+    dialog.wait_for()
+    assert "fixed-height pole" in dialog.inner_text()
+    dialog.locator("input[aria-label='Mark name']").first.fill("bm1")
+    dialog.locator("input[aria-label='Note']").first.fill("mag nail")
+    dialog.locator("button:has-text('OK')").click()
+    page.wait_for_timeout(500)
+    try:
+        assert live.state.site.mark_names == ["BM1"]
+        assert live.state.site.control[0].note == "mag nail"
+        # With marks set, every session says whether it was checked.
+        assert "no check shots" in page.locator("#panel-sessions").inner_text()
+    finally:
+        with live.server.acting():
+            live.state.site.control = []
