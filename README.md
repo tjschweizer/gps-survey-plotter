@@ -422,6 +422,52 @@ Marks are part of the site, so they travel in the project file. That made
 it format version 3; an older build refuses a version 3 project with its
 "newer version" message rather than silently dropping the marks.
 
+## Outlines and keep-out areas
+
+**+ Outline** in the Shot plan panel (or **Plan ▸ Add outline**) draws a
+building, a shed, a planting bed, a driveway, the street, a fence or the
+property line over the aerial: click each corner and double-click the last
+to close it. Choose what the next outline is in the panel's **Outlines**
+list before drawing, or change it afterwards.
+
+An outline's corners are numbered shots like any other, with a purpose set
+by its kind: a building's are `building corner`, a bed's `bed edge`, the
+lot's `property corner`. So they get rows on the field sheet and in the
+readings table, and are located the usual ways: an RTK shot typed in or
+recorded in SW Maps as `P12`, two tape ties, or a station and offset. The
+outline is drawn through its corners where they are best known, so it moves
+onto the measured corners as they come in. Its entry in the list gives the
+number located, the area and the perimeter. A four-cornered building or shed
+also gets both diagonals, which are equal for a rectangle; that is the check
+that found the soffit shots 1.1 ft out. Clicking an outline on the map
+picks its entry. Delete removes the outline with its corners, after asking.
+
+A **keep-out** outline's inside is not terrain. It is hatched on the map and
+the field sheet, and:
+
+- GNSS points inside it are left out of the result: the surface, the QC
+  readout, the heightmap and the Revit points. The map's points note says
+  how many were left out;
+- its pixels are masked. The distance mask already blanks the middle of a
+  house footprint, but not the 1.6 m just inside its walls, which would
+  otherwise be shown as measured ground;
+- laser terrain shots inside it are not used. A terrain shot planned inside
+  one says so in its position line;
+- **Plan ▸ Add tie transects** keeps off it, and does not jump a gap in the
+  coverage where the gap runs through it.
+
+Buildings, sheds, planting beds, the street and "other" are keep-out by
+default. A driveway is not, because its crown decides where water goes, and
+neither are fences and property lines. Tick or untick **keep-out** to change
+that. Untick **closed** to leave a run with no inside, such as a fence along
+one side. The session offsets are still solved from every point: a pass
+that clipped a bed still ties its outing to the others.
+
+Outlines live in the shot plan, so they travel in the project and in a
+`.yardplan`. They made the plan format version 2. An older build refuses a
+version 2 plan, or a project holding one, with its "newer" message rather
+than silently dropping the keep-out areas.
+
 ## Imagery and reference linework
 
 Providers are health-checked before use, because public GIS services go down.
