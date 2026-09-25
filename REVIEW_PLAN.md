@@ -112,6 +112,7 @@ These were set by the owner and apply to every item.
 | After A7 | 416 passed, 51 skipped, 43 deselected | 38 passed |
 | After C13 | 418 passed, 51 skipped, 44 deselected | 39 passed |
 | After C14 | 418 passed, 51 skipped, 45 deselected | 40 passed (twice) |
+| After C15 | 419 passed, 51 skipped, 46 deselected | 41 passed |
 
 Of the 55 skips, 50 need real data. The other 5 are network tests that the
 sandbox proxy refused.
@@ -188,8 +189,8 @@ These answers change the designs in section 5.
 | 21 | A1 | Laser terrain shots in the surface (and the Revit file) | processing | ✅ `e1bb548` |
 | 22 | A7 | Spot IDs on the map and in the datum dialog | UI | ✅ `50c887e` |
 | 23 | C13 | Status strip above the map | UI | ✅ `57efec7`, fix `1a623b9` |
-| 24 | C14 | Points drawn under the surface's weight | UI | ✅ |
-| 25 | C15 | Success reports stop being modal | UI | todo |
+| 24 | C14 | Points drawn under the surface's weight | UI | ✅ `2b7d33e` |
+| 25 | C15 | Success reports stop being modal | UI | ✅ |
 | 26 | C16 | Consistent units in 2D, 3D and layers | UI | todo |
 | 27 | C17 | Legend: ticks, marker key, no overlap | UI | todo |
 | 28 | C18 | Contrast, colour tokens, type and spacing scale | UI | todo |
@@ -1000,7 +1001,18 @@ Evidence for these is in the review screenshots: synthetic export,
 - **Verify:** browser test.
 - **Breaking?:** no.
 
-**C15 — Success reports stop being modal**
+**C15 — Success reports stop being modal** ✅
+- **Done:** `dialogs.showToast` (bottom-right `#toasts`, at most 3; title,
+  first line, a "Details" toggle for the full text, actions as buttons or
+  links, a dismiss button); `api.act` sends `info` notices there and keeps
+  `warning`/`error` modal. So nothing that needs acting on becomes a
+  toast: `report.solve_level(model)` makes a solve "warning" when a session
+  is unresolved, a setup is flagged or a check shot is over tolerance (all
+  three solve routes use it), and `MergeReport.attention` (set by A2 fill
+  conflicts) makes the open and merge notices warnings. Tests:
+  `test_web_browser.py::test_success_is_a_toast_and_trouble_is_a_dialog`,
+  the A5 browser test now reads its toast,
+  `test_web_api.py::test_a_solve_with_something_to_act_on_is_a_warning`.
 - **What:** fetch, solve and export results go to a dismissible side panel
   or toast with details. Warnings and errors stay modal. Files: `api.js`,
   `dialogs.js`, `app.css`.

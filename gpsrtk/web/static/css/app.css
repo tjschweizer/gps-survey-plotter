@@ -414,6 +414,42 @@ dialog {
   max-width: min(720px, 92vw);
   color: var(--text);
 }
+#toasts {
+  position: fixed;
+  right: 12px;
+  bottom: 30px;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(420px, calc(100vw - 24px));
+}
+.toast {
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-left: 4px solid var(--accent);
+  border-radius: 4px;
+  box-shadow: 0 4px 16px rgba(20, 26, 32, 0.18);
+  padding: 8px 10px;
+  font-size: 12px;
+}
+.toast-head { display: flex; align-items: center; gap: 6px; }
+.toast-head strong { flex: 1; }
+.toast-head .badge { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+.toast-summary { margin: 4px 0 0 14px; }
+.toast-details {
+  margin: 6px 0 0;
+  max-height: 40vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+}
+.toast-details.mono { font-family: var(--mono); font-size: 11px; }
+.toast-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 6px; }
+.toast-actions:empty { display: none; }
+button.link { border: 0; background: none; color: var(--accent); padding: 0 2px; text-decoration: underline; }
+
 dialog::backdrop { background: rgba(20, 26, 32, 0.28); }
 dialog .dlg { display: flex; flex-direction: column; max-height: 86vh; }
 dialog .dlg-title {

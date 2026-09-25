@@ -459,7 +459,7 @@ def create_app(state: AppState | None = None, *, vector_providers=None,
             if model is not None:
                 return srv.reply(notice(f"Vertical model ({model.mode})",
                                         report.solve_notice(model),
-                                        monospace=True))
+                                        report.solve_level(model), monospace=True))
             return srv.reply()
 
     @app.get("/api/datum")
@@ -493,7 +493,8 @@ def create_app(state: AppState | None = None, *, vector_providers=None,
         if parts:
             return srv.reply(notice(
                 "Coordinate system" if result.reprojected and not result.notes
-                else "Export opened", "\n\n".join(parts)))
+                else "Export opened", "\n\n".join(parts),
+                "warning" if result.attention else "info"))
         return srv.reply()
 
     @app.post("/api/export/add")
@@ -777,7 +778,7 @@ def create_app(state: AppState | None = None, *, vector_providers=None,
             if model is not None:
                 return srv.reply(notice(f"Vertical model ({model.mode})",
                                         report.solve_notice(model),
-                                        monospace=True))
+                                        report.solve_level(model), monospace=True))
             return srv.reply()
 
     @app.post("/api/vertical/solve")
@@ -792,7 +793,7 @@ def create_app(state: AppState | None = None, *, vector_providers=None,
             st.statusMessage.emit("Vertical model solved")
             return srv.reply(notice(f"Vertical model ({mode})",
                                     report.solve_notice(model),
-                                    monospace=True))
+                                    report.solve_level(model), monospace=True))
 
     @app.post("/api/vertical/clear")
     def clear_vertical():
@@ -1083,7 +1084,8 @@ def _merge_notice(result, title: str, *, offer_solve: bool = True) -> dict:
                         "post": "/api/vertical/solve",
                         "body": {"mode": "ellipsoidal"}})
     return notice(title, text,
-                  "info" if result.reconcilable else "warning",
+                  "info" if result.reconcilable and not result.attention
+                  else "warning",
                   actions=actions, monospace=True)
 
 

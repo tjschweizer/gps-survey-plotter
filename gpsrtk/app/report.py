@@ -65,6 +65,20 @@ def vertical_text(state) -> str:
     return "\n".join(parts)
 
 
+def solve_level(model) -> str:
+    """"warning" when a solve has something to act on, else "info".
+
+    An info notice is a toast that can be glanced past; anything that says
+    a session could not be tied or a laser setup does not check has to stop
+    the work until it is read.
+    """
+    flagged = model.level is not None and bool(model.level.flagged_setups)
+    unresolved = model.sessions is not None and bool(model.sessions.unresolved)
+    checks = model.sessions is not None and any(
+        c.get("flagged") for c in model.sessions.checks.values())
+    return "warning" if (flagged or unresolved or checks) else "info"
+
+
 def solve_notice(model) -> str:
     """The report shown after a solve, with anything worth acting on."""
     warnings = list(model.notes)

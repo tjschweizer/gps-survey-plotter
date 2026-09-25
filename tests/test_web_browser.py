@@ -584,10 +584,11 @@ def test_tie_transects_are_drawn_but_not_listed(page, live):
     """Plan ▸ Add tie transects: lines on the map, no rows in the table."""
     page.click("#menubar .menu-root > button:has-text('Plan')")
     page.locator("#menubar .menu:visible button.item:has-text('Add tie transects')").click()
-    dialog = page.locator("dialog[open]")
-    dialog.wait_for()
-    assert "Walk or mow these first" in dialog.inner_text()
-    dialog.locator("button").last.click()
+    toast = page.locator("#toasts .toast").last
+    toast.wait_for()
+    toast.locator("button:has-text('Details')").click()
+    assert "Walk or mow these first" in toast.inner_text()
+    toast.locator("button.close").click()
     page.wait_for_timeout(400)
     assert len(live.state.plan.lines) == 4
     assert page.locator("#plan-table .tabulator-row").count() == 0
@@ -639,3 +640,33 @@ def test_points_give_way_to_the_surface(page):
     assert page.is_checked("#show-points"), "the choice is remembered"
     page.uncheck("#show-points")                 # leave the default for others
     page.select_option("#surface-mode", "elevation")
+
+
+def test_success_is_a_toast_and_trouble_is_a_dialog(page, live):
+    """A report that something worked waits in a corner, details a click
+    away; one that needs acting on still stops the work."""
+    try:
+        page.click("#menubar .menu-root > button:has-text('Datum')")
+        page.locator("#menubar .menu:visible button.item:has-text('Solve session offsets only')").click()
+        toast = page.locator("#toasts .toast").last
+        toast.wait_for()
+        assert page.locator("dialog[open]").count() == 0
+        assert "Vertical model (ellipsoidal)" in toast.inner_text()
+        details = toast.locator(".toast-details")
+        assert details.is_hidden()
+        toast.locator("button:has-text('Details')").click()
+        assert "Vertical model: ellipsoidal" in details.inner_text()
+        toast.locator("button.close").click()
+        assert page.locator("#toasts .toast").count() == 0
+
+        # A refused edit is still modal.
+        seed(live, page, (E0, N0))
+        cell = row_cell(page, 1, "rod")
+        cell.click()
+        cell.click()
+        page.keyboard.type("forty")
+        page.keyboard.press("Enter")
+        page.locator("dialog[open]").wait_for()
+    finally:
+        with live.server.acting():
+            live.state.clear_vertical()

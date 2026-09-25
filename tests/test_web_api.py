@@ -805,3 +805,16 @@ def test_the_strip_says_when_session_offsets_are_unsolved(client, synthetic_outi
     assert {"text": "2 sessions, offsets NOT solved", "level": "warn"} in strip
     strip = post(client, "/api/vertical/solve", {"mode": "ellipsoidal"})["state"]["strip"]
     assert {"text": "2 sessions, offsets solved", "level": "ok"} in strip
+
+
+def test_a_solve_with_something_to_act_on_is_a_warning(client, synthetic_outing2,
+                                                       synthetic_elsewhere):
+    """Info notices become toasts that can be glanced past; a solve that
+    leaves a session untied must still stop the work."""
+    reply = post(client, "/api/vertical/solve", {"mode": "local"})
+    assert reply["notice"]["level"] == "info"
+    post(client, "/api/export/add", {"path": str(synthetic_outing2)})
+    post(client, "/api/export/add", {"path": str(synthetic_elsewhere)})
+    reply = post(client, "/api/vertical/solve", {"mode": "ellipsoidal"})
+    assert reply["notice"]["level"] == "warning"
+    assert "cannot be tied" in reply["notice"]["text"]

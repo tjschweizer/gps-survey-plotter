@@ -8,7 +8,7 @@
 // behind.
 
 import { applySnapshot } from "./store.js";
-import { showNotice, confirmDialog } from "./dialogs.js";
+import { showNotice, showToast, confirmDialog } from "./dialogs.js";
 
 const HEADERS = { "Content-Type": "application/json", "X-Yard-Survey": "1" };
 const SHOW_AFTER_MS = 180;
@@ -108,8 +108,14 @@ export async function act(url, body = {}, { busy = null, quiet = false } = {}) {
       notice.actions = [...(notice.actions ?? []),
         { label: "Open " + reply.download.filename, href: reply.download.url }];
     }
-    const chosen = await showNotice(notice);
-    if (chosen?.post) await act(chosen.post, chosen.body ?? {}, { busy: chosen.label + "…" });
+    const run = (chosen) => chosen?.post
+      && act(chosen.post, chosen.body ?? {}, { busy: chosen.label + "…" });
+    // Success is reported beside the work; warnings and errors still stop it.
+    if ((notice.level ?? "info") === "info") {
+      showToast(notice, run);
+    } else {
+      await run(await showNotice(notice));
+    }
   }
   return reply;
 }

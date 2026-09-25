@@ -101,6 +101,9 @@ class MergeReport:
     notes: list[str] = field(default_factory=list)
     static_shots: int = 0         # static shots the overlap was judged with
     check_shots: int = 0          # check shots on control marks
+    # Something in `notes` disagrees with what is already there (a SW Maps
+    # record against the plan): worth stopping for, not just a note.
+    attention: bool = False
 
     @property
     def added(self) -> int:

@@ -39,6 +39,46 @@ export function showNotice({ title, text, level = "info", monospace = false, act
   return modal(level, title, body, buttons);
 }
 
+// --- toasts ------------------------------------------------------------------------
+
+// A report that something worked - a solve, a fetch, an export - is read and
+// set aside, so it does not take the page hostage the way a warning should.
+// It waits in a corner, with its details a click away, until dismissed.
+const MAX_TOASTS = 3;
+let toastBox = null;
+
+export function showToast({ title, text, monospace = false, actions = [] }, onAction) {
+  if (!toastBox) {
+    toastBox = h("div", { id: "toasts", role: "status", "aria-live": "polite" });
+    document.body.append(toastBox);
+  }
+  const full = text ?? "";
+  const summary = full.split("\n").find((line) => line.trim()) ?? "";
+  const details = h("div", { class: "toast-details" + (monospace ? " mono" : ""), hidden: true }, full);
+  const toggle = h("button", { type: "button", class: "link", "aria-expanded": "false",
+    onclick: () => {
+      details.hidden = !details.hidden;
+      toggle.setAttribute("aria-expanded", String(!details.hidden));
+      toggle.textContent = details.hidden ? "Details" : "Hide details";
+    } }, "Details");
+  const el = h("div", { class: "toast" },
+    h("div", { class: "toast-head" },
+      h("span", { class: "badge" }), h("strong", {}, title),
+      h("button", { type: "button", class: "icon close", title: "Dismiss",
+                    "aria-label": "Dismiss", onclick: () => el.remove() }, "✕")),
+    h("div", { class: "toast-summary" }, summary),
+    details,
+    h("div", { class: "toast-actions" },
+      full.trim() !== summary.trim() ? toggle : null,
+      actions.map((a) => a.href
+        ? h("a", { class: "button", href: a.href, target: "_blank", rel: "noopener" }, a.label)
+        : h("button", { type: "button", class: "primary",
+                        onclick: () => { el.remove(); onAction?.(a); } }, a.label))));
+  toastBox.append(el);
+  while (toastBox.children.length > MAX_TOASTS) toastBox.firstElementChild.remove();
+  return el;
+}
+
 export async function confirmDialog(title, text, { yes = "Yes", no = "No" } = {}) {
   const body = h("div", { class: "dlg-body" }, text);
   return (await modal("warning", title, body,

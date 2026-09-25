@@ -269,6 +269,7 @@ class AppState:
         filled = self.fill_plan_from_records()
         if filled.filled or filled.conflicts:
             report.notes.append(filled.describe())
+            report.attention = bool(filled.conflicts)
 
         # Prefer continuous logging as the working layer; it is what surfaces
         # are built from. Fall back to whichever layer has the most points.
