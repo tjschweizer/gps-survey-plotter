@@ -124,6 +124,7 @@ These were set by the owner and apply to every item.
 | After A8 | 425 passed, 51 skipped, 56 deselected | 51 passed |
 | After C29 | 427 passed, 51 skipped, 56 deselected | 51 passed |
 | After C10 | 428 passed, 51 skipped, 56 deselected | — |
+| After C24 | 429 passed, 51 skipped, 56 deselected | — |
 
 Of the 55 skips, 50 need real data. The other 5 are network tests that the
 sandbox proxy refused.
@@ -212,8 +213,8 @@ These answers change the designs in section 5.
 | 33 | C23 | Keyboard menus and labelled fields | UI | ✅ `4cfb6fb` |
 | 34 | A8 | Start panel and recent files | UI | ✅ `9c90e3f` |
 | 35 | C29 | Solve report wording | UI | ✅ `eae8315` |
-| 36 | C10 | World file on the grid | processing | ✅ |
-| 37 | C24 | Surface smoothing sized in metres | processing | todo |
+| 36 | C10 | World file on the grid | processing | ✅ `2143862` |
+| 37 | C24 | Surface smoothing sized in metres | processing | ✅ |
 | 38 | C26 | .gitignore covers exports | code health | todo |
 | 39 | C27 | Atomic saves | code health | todo |
 | 40 | C28 | Server hardening | code health | todo |
@@ -1243,7 +1244,18 @@ Evidence for these is in the review screenshots: synthetic export,
 - **Breaking?:** exported rasters shift by up to half a pixel. That is the
   correction.
 
-**C24 — Surface smoothing sized in metres**
+**C24 — Surface smoothing sized in metres** ✅
+- **Done:** `surface.PREVIEW_SIZE` (320, now imported by `app/state.py`
+  instead of defined there). `build_surface` scales the site's
+  `median_size` (rounded, kept odd) and `gaussian_sigma` by
+  (width / PREVIEW_SIZE) / px, so the preview is unchanged and every other
+  raster smooths the same ground. On the synthetic lot, export vs preview
+  at 400 random points: median 1.67 mm / p90 4.37 mm before, 0.08 / 0.21 mm
+  after; figure vs preview 0.91 / 2.26 before, 0.06 / 0.19 after. Export
+  build 1.3 s. The mask (and measured fraction) is computed before
+  smoothing, so it cannot move. Test:
+  `test_surface_and_export.py::test_smoothing_covers_the_same_ground_at_every_size`.
+  **Needs a local real-data run** to confirm the findings.
 - **What:** treat the site's `median_size` and `gaussian_sigma` as sizes at
   the **preview's** pixel size, and scale them to each raster's pixel size.
   The preview is unchanged; the export and figures now match it. No

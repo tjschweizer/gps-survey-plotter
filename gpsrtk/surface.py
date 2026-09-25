@@ -22,6 +22,8 @@ The sequence, and why each step is there:
                     then flagged, never silently presented as measurement.
   median + gaussian Removes residual per-cell noise without moving real breaks
                     much. Applied after filling so the kernels see no NaN.
+                    Sized in metres: the site's sizes are pixels of the
+                    preview, scaled to this raster's pixel (`PREVIEW_SIZE`).
   fixed points      Optional. Laser rod shots on terrain, whose heights come
                     from the level network, replace the GNSS bins within
                     `FIXED_RADIUS_M` and are honoured exactly: after smoothing,
@@ -44,6 +46,12 @@ from scipy.ndimage import distance_transform_edt, gaussian_filter, median_filter
 
 from .model.pointset import PointSet, E, N, Z, elevation_column
 from .site import Site
+
+# The interactive preview's raster size. The site's smoothing sizes
+# (`median_size`, `gaussian_sigma`) are in pixels OF THE PREVIEW, and every
+# other raster scales them to its own pixel, so a 1024 px export and a figure
+# gridded at 8 cm are smoothed over the same ground as what is on screen.
+PREVIEW_SIZE = 320
 
 # A fixed point replaces the GNSS bins within this distance of it.
 FIXED_RADIUS_M = 0.5
@@ -275,10 +283,13 @@ def build_surface(ps: PointSet, site: Site, *,
 
     z = np.where(np.isnan(z),
                  griddata(pts, b.z.to_numpy(), (GX, GY), method="nearest"), z)
+    # The same ground, whatever the pixel: sigma was 25 cm in the preview,
+    # 8 cm in the export and 16 cm in figures before this.
+    scale = (ext.width / PREVIEW_SIZE) / px
     if median_size and median_size > 1:
-        z = median_filter(z, size=median_size)
+        z = median_filter(z, size=max(1, int(round(median_size * scale))) | 1)
     if sigma:
-        z = gaussian_filter(z, sigma=sigma)
+        z = gaussian_filter(z, sigma=sigma * scale)
     if fixed is not None and len(fixed):
         inside = ((fx >= ext.xmin) & (fx <= ext.xmax)
                   & (fy >= ext.ymin) & (fy <= ext.ymax))

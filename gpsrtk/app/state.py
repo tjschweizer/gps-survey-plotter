@@ -46,7 +46,7 @@ from ..georef import ImageryOffset, solve_imagery_offset
 from ..plan import FillReport, Plan
 from ..project import BasemapState, Project
 from ..site import Site, default_site
-from ..surface import Extent, Surface, build_surface
+from ..surface import PREVIEW_SIZE, Extent, Surface, build_surface
 from ..vertical import VerticalModel
 from .events import Signal
 
@@ -54,7 +54,6 @@ from .events import Signal
 # close: an outing's start and end shots bracket its passes.
 CHECK_WINDOW_S = 60 * 60.0
 
-PREVIEW_SIZE = 320
 EXPORT_SIZE = 1024
 FIGURE_CELL_M = 0.08
 IMAGERY_MARGIN_M = 20.0

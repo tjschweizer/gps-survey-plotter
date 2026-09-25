@@ -230,3 +230,21 @@ def test_the_world_file_places_every_pixel_on_its_grid_node(state):
         assert f + e * row == pytest.approx(gy[ny - 1 - row], abs=1e-6)
     # px, and with it the mask and the measured fraction, are unchanged.
     assert s.px == pytest.approx(s.extent.width / nx)
+
+
+def test_smoothing_covers_the_same_ground_at_every_size(state):
+    """The site's smoothing sizes are pixels of the preview. Applied as
+    pixels everywhere, sigma was ~25 cm on screen, 8 cm in the export and
+    16 cm in figures, so the three disagreed by millimetres."""
+    from gpsrtk.surface import PREVIEW_SIZE
+
+    preview = state.surface
+    assert preview.z.shape == (PREVIEW_SIZE, PREVIEW_SIZE)
+    rng = np.random.default_rng(0)
+    e = rng.uniform(449705, 449735, 400)
+    n = rng.uniform(4604555, 4604575, 400)
+    for other in (state.export_surface(), state.figure_surface()):
+        diff = np.abs(other.sample(e, n) - preview.sample(e, n))
+        assert np.median(diff) < 0.0005 and np.percentile(diff, 90) < 0.001
+        # Smoothing never touches the mask.
+        assert other.mask.any() and 0 < other.measured_fraction < 1
