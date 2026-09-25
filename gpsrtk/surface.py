@@ -22,6 +22,11 @@ The sequence, and why each step is there:
                     then flagged, never silently presented as measurement.
   median + gaussian Removes residual per-cell noise without moving real breaks
                     much. Applied after filling so the kernels see no NaN.
+  fixed points      Optional. Laser rod shots on terrain, whose heights come
+                    from the level network, replace the GNSS bins within
+                    `FIXED_RADIUS_M` and are honoured exactly: after smoothing,
+                    a correction made of small compact bumps is added so that
+                    the raster, sampled at each shot, returns its elevation.
 
 Row order is ascending northing: row 0 is the SOUTH edge, matching the meshgrid.
 Raster formats want north-up, so `to_image()` flips. Keeping the flip at the
@@ -39,6 +44,11 @@ from scipy.ndimage import distance_transform_edt, gaussian_filter, median_filter
 
 from .model.pointset import PointSet, E, N, Z, elevation_column
 from .site import Site
+
+# A fixed point replaces the GNSS bins within this distance of it.
+FIXED_RADIUS_M = 0.5
+# ...and bends the smoothed surface within this distance to pass through it.
+FIXED_BUMP_M = 1.0
 
 
 @dataclass
@@ -92,6 +102,17 @@ class Surface:
         """Elevations with unmeasured cells as NaN, for plotting."""
         return np.where(self.mask, np.nan, self.z)
 
+    def grid_axes(self) -> tuple[np.ndarray, np.ndarray]:
+        """Easting of each column and northing of each row: the grid nodes."""
+        ny, nx = self.z.shape
+        e = self.extent
+        return np.linspace(e.xmin, e.xmax, nx), np.linspace(e.ymin, e.ymax, ny)
+
+    def sample(self, e, n) -> np.ndarray:
+        """The surface at projected points, bilinear between grid nodes."""
+        return _bilinear(self.z, *self.grid_axes(), np.asarray(e, dtype=float),
+                         np.asarray(n, dtype=float))
+
     def to_image(self) -> tuple[np.ndarray, np.ndarray]:
         """North-up (row 0 = north) elevation and mask, for raster export."""
         return np.flipud(self.z), np.flipud(self.mask)
@@ -138,6 +159,51 @@ def bin_cells(ps: PointSet, cell: float, site: Site | None = None,
     return g.reset_index()
 
 
+def _bilinear(z, gx, gy, e, n) -> np.ndarray:
+    fx = np.clip((e - gx[0]) / (gx[1] - gx[0]), 0, len(gx) - 1)
+    fy = np.clip((n - gy[0]) / (gy[1] - gy[0]), 0, len(gy) - 1)
+    x0 = np.minimum(np.floor(fx).astype(int), len(gx) - 2)
+    y0 = np.minimum(np.floor(fy).astype(int), len(gy) - 2)
+    tx, ty = fx - x0, fy - y0
+    return ((1 - tx) * (1 - ty) * z[y0, x0] + tx * (1 - ty) * z[y0, x0 + 1]
+            + (1 - tx) * ty * z[y0 + 1, x0] + tx * ty * z[y0 + 1, x0 + 1])
+
+
+def _honour(z, gx, gy, fx, fy, fz) -> np.ndarray:
+    """Bend a smoothed grid so that, sampled at each fixed point, it returns
+    that point's height exactly.
+
+    The correction is a sum of compact bumps, (1 - (d/R)^2)^2 inside R, one
+    per point. Their amplitudes are solved against the bumps as the grid
+    itself samples them, so what `Surface.sample` reads back is exact, not
+    merely close; beyond R of every point nothing changes. Each bump is
+    worked out only over the window of nodes within R of its point.
+    """
+    dx, dy = gx[1] - gx[0], gy[1] - gy[0]
+    full = np.zeros_like(z)
+    windows = []
+    for x, y in zip(fx, fy):
+        c0 = max(int(np.floor((x - FIXED_BUMP_M - gx[0]) / dx)), 0)
+        c1 = min(int(np.ceil((x + FIXED_BUMP_M - gx[0]) / dx)) + 1, len(gx))
+        r0 = max(int(np.floor((y - FIXED_BUMP_M - gy[0]) / dy)), 0)
+        r1 = min(int(np.ceil((y + FIXED_BUMP_M - gy[0]) / dy)) + 1, len(gy))
+        WX, WY = np.meshgrid(gx[c0:c1], gy[r0:r1])
+        d2 = ((WX - x) ** 2 + (WY - y) ** 2) / FIXED_BUMP_M ** 2
+        windows.append((r0, r1, c0, c1, np.where(d2 < 1.0, (1.0 - d2) ** 2, 0.0)))
+
+    at = np.zeros((len(fx), len(fx)))
+    for k, (r0, r1, c0, c1, bump) in enumerate(windows):
+        full[r0:r1, c0:c1] = bump
+        at[:, k] = _bilinear(full, gx, gy, fx, fy)
+        full[r0:r1, c0:c1] = 0.0
+    residual = fz - _bilinear(z, gx, gy, fx, fy)
+    amplitude, *_ = np.linalg.lstsq(at, residual, rcond=None)
+    out = z.copy()
+    for a, (r0, r1, c0, c1, bump) in zip(amplitude, windows):
+        out[r0:r1, c0:c1] += a * bump
+    return out
+
+
 def build_surface(ps: PointSet, site: Site, *,
                   size: int | None = None,
                   cell: float | None = None,
@@ -145,11 +211,16 @@ def build_surface(ps: PointSet, site: Site, *,
                   median_size: int | None = None,
                   sigma: float | None = None,
                   extent: Extent | None = None,
-                  z_column: str | None = None) -> Surface:
+                  z_column: str | None = None,
+                  fixed: pd.DataFrame | None = None) -> Surface:
     """Grid a point set into a Surface. Defaults come from the site.
 
     Height comes from the derived elevation column once a vertical model has
     been applied, and from raw ellipsoidal height otherwise.
+
+    `fixed`, off by default, is a frame of `e`, `n`, `z` points on the same
+    vertical datum - laser terrain shots - that replace the GNSS bins within
+    `FIXED_RADIUS_M` and that the surface passes through exactly.
     """
     sd = site.surface
     size = size or sd.raster_size
@@ -164,6 +235,16 @@ def build_surface(ps: PointSet, site: Site, *,
 
     z_column = z_column or elevation_column(ps)
     b = bin_cells(ps, cell, site, z_column)
+    if fixed is not None and len(fixed):
+        fx = fixed[E].to_numpy(dtype=float)
+        fy = fixed[N].to_numpy(dtype=float)
+        near = np.zeros(len(b), dtype=bool)
+        for x, y in zip(fx, fy):
+            near |= np.hypot(b.x.to_numpy() - x, b.y.to_numpy() - y) <= FIXED_RADIUS_M
+        b = pd.concat([b.loc[~near],
+                       pd.DataFrame({"x": fx, "y": fy, "z": fixed["z"].to_numpy(dtype=float),
+                                     "count": 1})],
+                      ignore_index=True)
     ext = extent or Extent.square_around(b.x.to_numpy(), b.y.to_numpy())
 
     gx = np.linspace(ext.xmin, ext.xmax, size)
@@ -188,6 +269,12 @@ def build_surface(ps: PointSet, site: Site, *,
         z = median_filter(z, size=median_size)
     if sigma:
         z = gaussian_filter(z, sigma=sigma)
+    if fixed is not None and len(fixed):
+        inside = ((fx >= ext.xmin) & (fx <= ext.xmax)
+                  & (fy >= ext.ymin) & (fy <= ext.ymax))
+        if inside.any():
+            z = _honour(z, gx, gy, fx[inside], fy[inside],
+                        fixed["z"].to_numpy(dtype=float)[inside])
 
     return Surface(z=z, mask=mask, extent=ext, px=px,
                    n_points=len(ps), n_cells=len(b), site=site,

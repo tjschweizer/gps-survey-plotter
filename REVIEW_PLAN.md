@@ -108,6 +108,7 @@ These were set by the owner and apply to every item.
 | After A4 | 391 passed, 51 skipped, 40 deselected | 35 passed |
 | After A3 | 403 passed, 51 skipped, 40 deselected | 36 passed |
 | After A5 | 408 passed, 51 skipped, 42 deselected | 37 passed |
+| After A1 | 414 passed, 51 skipped, 42 deselected | 37 passed |
 
 Of the 55 skips, 50 need real data. The other 5 are network tests that the
 sandbox proxy refused.
@@ -180,8 +181,8 @@ These answers change the designs in section 5.
 | 17 | A2 | Fill plan shots from SW Maps records by station | workflow | ✅ `ea97af3` |
 | 18 | A4 | Per-setup level closure and laser check | workflow | ✅ `7d29d7b` |
 | 19 | A3 | Control marks and start/end check shots | workflow | ✅ `1a5cf80` (**format v3**) |
-| 20 | A5 | Tie transects | workflow | ✅ |
-| 21 | A1 | Laser terrain shots in the surface (and the Revit file) | processing | todo |
+| 20 | A5 | Tie transects | workflow | ✅ `062fd1f` |
+| 21 | A1 | Laser terrain shots in the surface (and the Revit file) | processing | ✅ |
 | 22 | A7 | Spot IDs on the map and in the datum dialog | UI | todo |
 | 23 | C13 | Status strip above the map | UI | todo |
 | 24 | C14 | Points drawn under the surface's weight | UI | todo |
@@ -895,7 +896,26 @@ permanent benchmark" has no code path behind it.
   only the transects is reconcilable.
 - **Breaking?:** no.
 
-**A1 — Laser terrain shots in the surface (and the Revit file)**
+**A1 — Laser terrain shots in the surface (and the Revit file)** ✅
+- **Done:** `build_surface(fixed=None)` (off by default; established-findings
+  calls unchanged) takes a frame of `e`, `n`, `z`: bins within
+  `FIXED_RADIUS_M` 0.5 m are replaced by the points, and after smoothing
+  `_honour` adds compact bumps (radius `FIXED_BUMP_M` 1 m, worked out over
+  local windows) with amplitudes solved against the grid's own bilinear
+  sampling, so `Surface.sample(e, n)` (new, with `Surface.grid_axes`)
+  returns each shot's elevation exactly (~1e-12 mm on the synthetic lot).
+  `AppState.laser_points()` gives one point per terrain station, only for a
+  local model with a datum shift; it re-solves the level network from the
+  rod readings when the model came from a project (the network is not
+  stored). Preview, figure and export surfaces use it.
+  `io/revit.append_laser_points` appends the shots (kind "laser") and drops
+  bins within 0.5 m; the Revit and heightmap notices say how many; the solve
+  notice says laser shots are not used in ellipsoidal/NAVD88 mode. README:
+  a paragraph in "The vertical model". Tests: `test_surface_and_export.py`
+  laser tests (exact at every shot, default off, row arithmetic, none in
+  other modes, survives a reopen) and
+  `test_web_api.py::test_the_revit_export_says_how_many_laser_shots_it_added`.
+  **Needs a local real-data run** (findings use the default `fixed=None`).
 - **What:** after a **local** solve, terrain rod shots (laser elevation from
   the level network) become fixed points:
   - In `build_surface` (new optional argument, **off by default**, so

@@ -25,9 +25,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
-from ..model.pointset import PointSet, E, N, Z, KIND, elevation_column
+from ..model.pointset import PointSet, E, N, Z, ELEV, KIND, elevation_column
 from ..site import Site
 from ..units import M_PER_FT, m_to_ft
 
@@ -35,6 +36,25 @@ from ..units import M_PER_FT, m_to_ft
 # 30k it is effectively unusable. Warn rather than fail, since the threshold is
 # soft and machine-dependent.
 POINT_WARNING_THRESHOLD = 30_000
+
+
+def append_laser_points(binned: PointSet, laser, radius_m: float = 0.5
+                        ) -> tuple[PointSet, int]:
+    """Add laser terrain shots to binned points, dropping bins near them.
+
+    A laser shot's height is better than the GNSS bins around it, so those
+    within `radius_m` go, and the shot takes their place - the same rule
+    the surface follows. Returns the new set and how many bins were dropped.
+    """
+    d = binned.df
+    near = np.zeros(len(d), dtype=bool)
+    for x, y in zip(laser["e"], laser["n"]):
+        near |= np.hypot(d[E].to_numpy() - x, d[N].to_numpy() - y) <= radius_m
+    rows = pd.DataFrame({E: laser["e"].to_numpy(), N: laser["n"].to_numpy(),
+                         Z: np.nan, ELEV: laser["z"].to_numpy(), KIND: "laser"})
+    out = pd.concat([d.loc[~near], rows], ignore_index=True, sort=False)
+    return binned.with_frame(out, f"laser shots (+{len(rows)}, -{int(near.sum())})"), \
+        int(near.sum())
 
 
 def write_points(ps: PointSet, site: Site, path: str | Path, *,

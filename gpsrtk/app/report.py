@@ -78,6 +78,12 @@ def solve_notice(model) -> str:
             "The laser network has no redundancy, so a mis-read rod would "
             "be invisible. Shoot at least two points from each pair of "
             "setups next time.")
+    if (model.mode in ("ellipsoidal", "navd88") and model.level is not None
+            and model.level.elevations):
+        warnings.append(
+            f"Laser terrain shots are not used in the surface in {model.mode} "
+            "mode: their elevations are on the local datum, and these heights "
+            "are not. Solve the local datum to use them.")
     if model.level is not None and model.level.flagged_setups:
         warnings.append(
             "Laser setups to look at:\n"
@@ -185,6 +191,11 @@ def revit_notice(res: dict, site, vertical=None) -> tuple[str, bool]:
         notes.append(
             "This many points will make Revit's importer very slow. "
             "Consider a larger bin cell.")
+    if res.get("laser"):
+        notes.append(
+            f"{res['laser']} laser terrain shots were added at their level-"
+            f"network elevations, and the {res.get('dropped', 0)} GNSS bins "
+            "within 0.5 m of them were dropped.")
     text = (f"{res['n_points']:,} points\n"
             f"Heights: {label} ({res['z_column']})\n"
             f"Origin sidecar: {res['sidecar'].name}"
@@ -192,12 +203,15 @@ def revit_notice(res: dict, site, vertical=None) -> tuple[str, bool]:
     return text, antenna
 
 
-def heightmap_notice(surface, datum: str = "") -> str:
+def heightmap_notice(surface, datum: str = "", laser: int = 0) -> str:
     return (f"{surface.describe()}\n\n"
             f"Heights: {datum + ' (' if datum else ''}{surface.z_column}"
             f"{')' if datum else ''}\n\n"
-            "The 16-bit raster contains interpolated fill in unmeasured cells; "
-            "the true mask is in the .npy alongside it.")
+            + (f"{laser} laser terrain shots replace the GNSS within 0.5 m "
+               "of them, and the surface passes through each.\n\n"
+               if laser else "")
+            + "The 16-bit raster contains interpolated fill in unmeasured "
+              "cells; the true mask is in the .npy alongside it.")
 
 
 def field_sheet_notice(has_basemap: bool) -> str:

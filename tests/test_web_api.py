@@ -759,3 +759,11 @@ def test_the_printed_maps_download_as_png(client):
         r = client.get(reply["download"]["url"])
         assert r.headers["content-type"] == "image/png"
         assert r.content.startswith(b"\x89PNG")
+
+
+def test_the_revit_export_says_how_many_laser_shots_it_added(client):
+    post(client, "/api/vertical/solve", {"mode": "local"})
+    reply = post(client, "/api/export/revit")
+    assert "12 laser terrain shots were added" in reply["notice"]["text"]
+    reply = post(client, "/api/export/heightmap")
+    assert "12 laser terrain shots replace the GNSS" in reply["notice"]["text"]

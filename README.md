@@ -351,6 +351,16 @@ local datum` runs three steps:
    laser's ground surface, absorbing antenna height and the arbitrary datum
    together.
 
+After a local solve, the laser terrain shots also go into the surface
+itself: a rod read to an eighth of an inch is a better height than the GNSS
+around it, and planned swales, crowns and break lines would otherwise reach no
+deliverable. Each terrain shot (`lawn`, or a plan shot with a terrain purpose)
+replaces the GNSS bins within 0.5 m, and the surface - smoothed or not -
+passes through it exactly. The Revit points file gets the same treatment: the
+shots are appended at their level-network elevations and the GNSS bins within
+0.5 m of them are dropped. In ellipsoidal or NAVD88 mode the GNSS heights are
+on another datum, so no laser shots are used, and the solve says so.
+
 Two things the panel will tell you that are worth acting on:
 
 - **A session with no overlapping ground cannot be tied.** Nothing recovers it

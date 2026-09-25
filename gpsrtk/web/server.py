@@ -860,25 +860,34 @@ def create_app(state: AppState | None = None, *, vector_providers=None,
                     data = _zip_dir(tmp)
             st.statusMessage.emit(f"Wrote {result['paths']['png16'].name}")
             download = srv.offer(f"heightmap_{tag}.zip", data, "application/zip")
+            laser = st.laser_points()
             return srv.reply(notice("Heightmap written",
-                                    report.heightmap_notice(surface, datum)),
+                                    report.heightmap_notice(
+                                        surface, datum,
+                                        0 if laser is None else len(laser))),
                              download=download)
 
     @app.post("/api/export/revit")
     def export_revit():
         from ..filters import BinToCell
-        from ..io.revit import write_points
+        from ..io.revit import append_laser_points, write_points
 
         with srv.acting("Writing Revit points…"):
             srv.require_data()
             with srv.guard("Export failed"):
                 binned = BinToCell(cell=st.site.surface.bin_cell_m).for_site(
                     st.site).apply(st.result)
+                laser = st.laser_points()
+                dropped = 0
+                if laser is not None:
+                    binned, dropped = append_laser_points(binned, laser)
                 with tempfile.TemporaryDirectory() as tmp:
                     result = write_points(binned, st.site,
                                           Path(tmp) / "revit_points_ft.csv",
                                           vertical=st.vertical)
                     data = _zip_dir(tmp)
+                result["laser"] = 0 if laser is None else len(laser)
+                result["dropped"] = dropped
             text, raw = report.revit_notice(result, st.site, st.vertical)
             download = srv.offer("revit_points_ft.zip", data, "application/zip")
             return srv.reply(notice("Revit points written", text,

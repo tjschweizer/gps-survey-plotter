@@ -139,3 +139,71 @@ def test_heightmap_export_writes_a_recoverable_mapping(tmp_path, surf):
     info = res["paths"]["info"].read_text(encoding="utf-8")
     assert "elevation(m) =" in info
     assert "INTERPOLATED FILL" in info
+
+
+# --- laser terrain shots in the surface (synthetic) -----------------------------
+
+def test_the_surface_passes_through_every_laser_shot(state):
+    """After a local solve the laser shots are the better heights; the
+    surface, sampled at each, returns its level-network elevation."""
+    state.solve_vertical("local")
+    laser = state.laser_points()
+    assert len(laser) == 12                   # 14 readings, 12 stations
+    for surface in (state.surface, state.export_surface()):
+        assert np.abs(surface.sample(laser["e"], laser["n"]) - laser["z"]).max() < 1e-3
+
+
+def test_laser_shots_are_off_unless_asked_for(state):
+    """build_surface's default is unchanged, so the established findings
+    are computed exactly as before."""
+    state.solve_vertical("local")
+    plain = build_surface(state.result, state.site, size=96)
+    laser = state.laser_points()
+    with_laser = build_surface(state.result, state.site, size=96, fixed=laser)
+    assert not np.allclose(plain.z, with_laser.z)
+    assert plain.n_cells > 0
+
+
+def test_the_revit_file_swaps_nearby_bins_for_the_laser_shots(state, tmp_path):
+    from gpsrtk.filters import BinToCell
+    from gpsrtk.io.revit import append_laser_points, write_points
+
+    state.solve_vertical("local")
+    binned = BinToCell(cell=0.5).for_site(state.site).apply(state.result)
+    laser = state.laser_points()
+    # The synthetic shots sit between passes, ~0.54 m from the nearest bin
+    # centre; a 1 m radius makes the swap visible.
+    assert append_laser_points(binned, laser)[1] == 0
+    out, dropped = append_laser_points(binned, laser, radius_m=1.0)
+    assert dropped > 0
+    assert len(out) == len(binned) - dropped + len(laser)
+    res = write_points(out, state.site, tmp_path / "r.csv")
+    assert res["n_points"] == len(out)
+    rows = np.loadtxt(tmp_path / "r.csv", delimiter=",")
+    assert len(rows) == len(out)
+
+
+def test_no_laser_shots_outside_a_local_solve(state):
+    from gpsrtk.app import report
+
+    model = state.solve_vertical("ellipsoidal")
+    assert state.laser_points() is None
+    assert "not used in the surface in ellipsoidal mode" in report.solve_notice(model)
+    state.clear_vertical()
+    assert state.laser_points() is None
+
+
+def test_laser_shots_survive_a_reopen(state, tmp_path):
+    """The level network is not stored; it is solved again from the same
+    readings, which gives the same elevations."""
+    from gpsrtk.app import AppState
+    from gpsrtk.site import example_site
+
+    state.solve_vertical("local")
+    before = state.laser_points()
+    saved = state.save_project(tmp_path / "laser.yardproj")
+    other = AppState(site=example_site(), cache_dir=state.cache_dir)
+    other.load_project(saved)
+    assert other.vertical.level is None
+    after = other.laser_points()
+    assert np.array_equal(before["z"].to_numpy(), after["z"].to_numpy())

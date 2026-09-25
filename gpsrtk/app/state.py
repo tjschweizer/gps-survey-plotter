@@ -572,7 +572,8 @@ class AppState:
         if build and len(self.result) >= 3:
             try:
                 self.surface = build_surface(self.result, self.site,
-                                             size=PREVIEW_SIZE)
+                                             size=PREVIEW_SIZE,
+                                             fixed=self.laser_points())
             except Exception as exc:                      # noqa: BLE001
                 self.statusMessage.emit(f"Could not build surface: {exc}")
         elif build:
@@ -612,13 +613,62 @@ class AppState:
         b = bin_cells(self.result, self.site.surface.bin_cell_m, self.site)
         span = Extent.square_around(b.x.to_numpy(), b.y.to_numpy()).width
         size = int(min(1024, max(256, round(span / cell_m))))
-        return build_surface(self.result, self.site, size=size)
+        return build_surface(self.result, self.site, size=size,
+                             fixed=self.laser_points())
 
     def export_surface(self) -> Surface | None:
         """Full-resolution surface for writing rasters."""
         if self.result is None or len(self.result) < 3:
             return None
-        return build_surface(self.result, self.site, size=EXPORT_SIZE)
+        return build_surface(self.result, self.site, size=EXPORT_SIZE,
+                             fixed=self.laser_points())
+
+    def laser_points(self):
+        """Terrain rod shots at their laser elevations, for the surface.
+
+        Only after a LOCAL solve that was tied to the laser: then the laser
+        elevations and the corrected GNSS heights are on one datum, and the
+        laser - a level read to an eighth of an inch - is the better height.
+        In ellipsoidal or NAVD88 mode the GNSS heights are antenna heights on
+        another datum entirely, and mixing the two would put steps in the
+        ground, so there are none. One point per station, `e`, `n`, `z`
+        (metres), or None.
+
+        The level network is not stored in a project, so after a reopen it
+        is solved again from the same rod readings - which gives the same
+        elevations, since nothing else goes into it.
+        """
+        import pandas as pd
+
+        from .. import vertical as V
+        from ..filters import KindSelect
+        from ..model.pointset import ELEV
+
+        model, spots = self.vertical, self.spots
+        if (model is None or model.mode != "local" or not model.datum_shift_m
+                or spots is None):
+            return None
+        marks = self.site.mark_names
+        level = model.level
+        if level is None:
+            v = self.site.vertical
+            try:
+                level = V.level_network(spots, benchmark_id=v.benchmark_point_id,
+                                        benchmark_elev_ft=v.benchmark_elev_ft,
+                                        marks=marks)
+            except ValueError:
+                return None
+        lawn = KindSelect(names=["lawn"]).apply(spots)
+        shots = V.spots_with_laser_elevations(lawn, level, marks)
+        if not len(shots):
+            return None
+        d = shots.df
+        frame = pd.DataFrame({"station": V.stations(shots, marks).astype(str),
+                              "e": d[E].to_numpy(), "n": d[N].to_numpy(),
+                              "z": d[ELEV].to_numpy(dtype=float)})
+        return (frame.groupby("station", sort=False)
+                .agg(e=("e", "mean"), n=("n", "mean"), z=("z", "first"))
+                .reset_index())
 
     def set_active_layer(self, name: str) -> None:
         if name != self.active_layer and name in self.layers:
