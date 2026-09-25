@@ -82,7 +82,7 @@ class VerticalDatum:
     """
 
     name: str = "local arbitrary"
-    benchmark_point_id: int = 1
+    benchmark_point_id: int | str = 1     # a station: SW Maps ID, "P12", "BM1"
     benchmark_elev_ft: float = 100.0
     benchmark_note: str = ""
     geoid_separation_m: float | None = None

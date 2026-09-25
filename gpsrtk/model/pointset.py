@@ -54,6 +54,9 @@ BASELINE = "baseline_m"      # distance to it
 ROD_IN = "rod_in"       # laser rod reading, inches
 SETUP = "setup"         # instrument setup id the rod reading belongs to
 KIND = "kind"           # user-assigned classification: lawn, bldg, ...
+STATION = "station"     # the physical point a rod was read on: "P12" for a
+                        # planned shot, a mark name such as "BM1", any name
+                        # for a turning point. See `vertical.stations`.
 
 # provenance
 TRACK = "track"         # track or layer name within the export

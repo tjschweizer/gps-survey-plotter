@@ -367,11 +367,11 @@ def test_a_benchmark_plan_shot_can_hold_the_datum(state):
     point.number = 101
     point.rod_in = 30.0
     state.plan_changed()
-    state.site.vertical.benchmark_point_id = 101
+    state.site.vertical.benchmark_point_id = "P101"
     state.site.vertical.benchmark_elev_ft = 100.0
 
     model = state.solve_vertical("local")
-    assert model.level.elevations[101] == pytest.approx(ft_to_m(100.0), abs=1e-6)
+    assert model.level.elevations["P101"] == pytest.approx(ft_to_m(100.0), abs=1e-6)
     # The other shots moved with it: the same setup reads them against it.
     assert 1 in model.level.elevations
     assert model.tie and model.tie["n"] > 0
@@ -392,3 +392,80 @@ def test_a_building_shot_joins_the_network_but_not_the_tie(state):
     reference = V.spots_with_laser_elevations(lawn, model.level)
     assert 12 not in set(reference.df["point_id"])
     assert len(reference) == len(lawn)
+
+
+# --- stations (synthetic) ---------------------------------------------------
+
+@pytest.mark.parametrize("value, key", [
+    (12, 12), (12.0, 12), ("12", 12), (" 12 ", 12), ("12.0", 12),
+    ("p12", "P12"), (" bm1 ", "BM1"), ("", None), (None, None),
+    (float("nan"), None),
+])
+def test_station_names_have_one_canonical_form(value, key):
+    assert V.station_key(value) == key
+
+
+def test_a_station_comes_from_the_attribute_then_the_name_then_the_id():
+    import pandas as pd
+
+    ps = P.PointSet(df=pd.DataFrame({
+        "e": 0.0, "n": 0.0, "z_ellip_m": 0.0,
+        "point_id": pd.array([1, 2, 3, 4, 5], dtype="Int64"),
+        "station": ["bm1", None, None, "", 7],
+        "feature_name": ["P9", "p12", "bm2", "spot 4", None],
+    }))
+    assert list(V.stations(ps, marks=["BM2"])) == ["BM1", "P12", "BM2", 4, 7]
+    assert list(V.stations(ps)) == ["BM1", "P12", 3, 4, 7]
+
+
+def test_a_plan_number_and_a_sw_maps_id_are_different_points(state):
+    """Plan #1 and SW Maps spot 1 used to be solved as one point, with
+    residuals of +/-31.8 in. They are different points and fit exactly."""
+    point = state.plan.add_point(449703.0, 4604560.0, setup="0")
+    point.rod_in = 20.0
+    state.plan_changed()
+
+    model = state.solve_vertical("local")
+    assert np.abs(model.level.adjustment.obs_residuals).max() < 1e-6
+    assert {1, "P1"} <= set(model.level.elevations)
+    assert state.spot_ids()[:2] == [1, 2] and state.spot_ids()[-1] == "P1"
+
+
+def test_two_readings_on_one_station_add_a_degree_of_freedom(state):
+    import pandas as pd
+
+    spots = state.layers["spots"]
+
+    def with_bm1(readings):
+        d = spots.df
+        extra = d.iloc[[0] * readings].copy()
+        extra["point_id"] = pd.array([900 + k for k in range(readings)], dtype="Int64")
+        extra[P.STATION] = "BM1"
+        extra[P.ROD_IN] = 50.0
+        return spots.with_frame(pd.concat([d, extra], ignore_index=True), "bm1")
+
+    once = V.level_network(with_bm1(1))
+    twice = V.level_network(with_bm1(2))
+    assert "BM1" in twice.elevations
+    assert twice.adjustment.dof == once.adjustment.dof + 1
+
+
+def test_a_plan_station_can_be_the_benchmark(state):
+    for k in range(3):
+        point = state.plan.add_point(449703.0 + k, 4604560.0, setup="0")
+        point.rod_in = 40.0 + k
+    state.plan_changed()
+    state.set_datum_tie(point="p3", elev_ft=100.0)
+    assert state.site.vertical.benchmark_point_id == "P3"
+
+    model = state.solve_vertical("local")
+    assert model.level.elevations["P3"] == pytest.approx(ft_to_m(100.0), abs=1e-6)
+    # One inch lower on the rod is one inch higher on the ground.
+    assert m_to_ft(model.level.elevations["P2"]) == pytest.approx(100.0 + 1 / 12, abs=1e-6)
+
+
+def test_a_benchmark_typed_as_a_number_is_still_a_sw_maps_id(state):
+    state.set_datum_tie(point="7", elev_ft=100.0)
+    assert state.site.vertical.benchmark_point_id == 7
+    with pytest.raises(ValueError, match="not a point id"):
+        state.set_datum_tie(point="BM9", elev_ft=100.0)

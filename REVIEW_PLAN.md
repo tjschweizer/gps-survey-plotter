@@ -97,6 +97,7 @@ These were set by the owner and apply to every item.
 | After C12 | 292 passed, 51 skipped, 40 deselected | — |
 | After C7 | 335 passed, 51 skipped, 40 deselected | 35 passed |
 | After C1 | 337 passed, 51 skipped, 40 deselected | — |
+| After C2 | 354 passed, 51 skipped, 40 deselected | 35 passed |
 
 Of the 55 skips, 50 need real data. The other 5 are network tests that the
 sandbox proxy refused.
@@ -151,8 +152,8 @@ These answers change the designs in section 5.
 | 5 | C11 | Correct daylight-saving times for `.swmz` | processing | ✅ `731a4e4` |
 | 6 | C12 | Instrument height guard | processing | ✅ `5ca29f2` |
 | 7 | C7 | Rod entry guard: feet, inches and fractions | workflow | ✅ `2fd6e47` |
-| 8 | C1 | Every rod shot joins the level network | processing | ✅ |
-| 9 | C2 | Station identities: plan shots vs SW Maps records | processing | todo (**format/meaning**) |
+| 8 | C1 | Every rod shot joins the level network | processing | ✅ `0cc6dc4` |
+| 9 | C2 | Station identities: plan shots vs SW Maps records | processing | ✅ (**meaning changed**) |
 | 10 | C25 | Split sessions where the data proves a mount change | processing | todo (**session names change**) |
 | 11 | C6 | One overlap definition for the merge report and the solve | processing | todo |
 | 12 | O1 | Session offsets from cell differences | processing | todo |
@@ -337,6 +338,28 @@ the review session's scratchpad.
 
 **C2 — Station identities: plan shots vs SW Maps records** (changes meaning;
 approved)
+
+✅ *Done.* `vertical.station_key` (canonical form: int for a bare integer,
+stripped upper-case text otherwise, so `bm1` = `BM1`), `vertical.stations(ps,
+marks=())` (attribute → `P\d+`/mark name → SW Maps ID; a row with none of
+these becomes its own `#<index>` station), `sort_stations`,
+`describe_stations`. `level_network`, `spots_with_laser_elevations` and
+`solve_vertical` take `marks=` for A3; nothing passes marks yet.
+`Plan.to_frame` adds `station = "P<n>"` (and keeps `point_id`). Both readers
+alias `station`; the `.swmz` reader now also fills `feature_name` for
+recorded shots, as the CSV export does, so rule 2 works there too.
+`apply_tie` stores `station_key(point)`. `AppState.set_datum_tie` now refuses
+a station that no rod shot was read on (when there are rod shots at all),
+because any name is syntactically valid; the message still reads "is not a
+point id", which `test_web_api.py::test_a_bad_benchmark_is_refused` pins.
+The station-naming convention is in the README ("Station names") and in the
+field sheet's legend. Tests: `test_vertical.py` station tests (E2, the BM1
+degree of freedom, a `P3` benchmark, int-vs-name ties),
+`test_swmz.py::test_a_shot_named_after_its_plan_number_is_that_station`,
+`::test_the_station_attribute_is_read`. The C1 test now holds `P101`.
+**Format note:** no file-format bump; `benchmark_point_id` in site/project
+JSON may now be a string. A project whose benchmark was a plan number now
+means the SW Maps ID of that number (approved).
 
 *What.* Every rod observation gets a **station**, the name of the physical
 point it was read on:

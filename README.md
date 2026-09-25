@@ -360,6 +360,27 @@ Two things the panel will tell you that are worth acting on:
   adds its own height of instrument as an unknown, so a single shared point
   only determines it and buys no checking. Shoot at least two.
 
+## Station names
+
+The level network solves one elevation per **station**: the physical point a
+rod was read on. Two readings are the same point exactly when they share a
+station, which is how a benchmark read at the open and close of a setup, or
+from two setups, checks itself. Name records in SW Maps by this convention,
+in the record's name or in a `station` attribute:
+
+- a **planned shot** is `P` and its number: **`P12`**;
+- a **permanent mark** is its mark name, for example **`BM1`**;
+- a **turning point** or any other re-read point gets any name - the same
+  name means the same physical point;
+- everything else can keep SW Maps' own ID.
+
+A plan row is always station `P<number>`. A SW Maps record is its `station`
+attribute when that is set; otherwise its name, when the name is `P12` or a
+control mark; otherwise its SW Maps ID. Names are case-insensitive. So plan
+shot 1 (`P1`) and SW Maps record 1 are different points, and the benchmark in
+**Datum ▸ Datum tie…** can be a SW Maps ID (`12`), a planned shot (`P12`) or a
+mark (`BM1`). The field sheet prints the same convention.
+
 ## Imagery and reference linework
 
 Providers are health-checked before use, because public GIS services go down.

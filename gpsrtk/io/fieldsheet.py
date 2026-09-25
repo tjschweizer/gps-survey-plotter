@@ -266,6 +266,12 @@ def write_field_sheet(plan, path: str | Path, *, basemap=None, site=None,
   or leave both blank and the planned position stands, which on this lot costs
   under 2&nbsp;cm of height per foot of error.
   A <b>float</b> fix is worse than the planned position &mdash; leave it blank.
+  <br>
+  <b>Station names in SW Maps</b> &mdash; name each record after the point it
+  was read on: a planned shot as <b>P</b> and its number (<b>P12</b>), a
+  permanent mark by its name (<b>BM1</b>), a turning point by any name you
+  like. The same name means the same physical point. Anything else can keep
+  SW Maps' own ID.
 </div>
 
 <table>

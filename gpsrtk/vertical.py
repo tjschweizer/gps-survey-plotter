@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -34,7 +35,7 @@ import pandas as pd
 from . import qc
 from .model.adjust import Adjustment, LeastSquares
 from .model.pointset import (PointSet, E, N, Z, ELEV, ROD_IN, SETUP, SESSION,
-                             LAT, LON)
+                             STATION, LAT, LON)
 from .units import M_PER_IN, ft_to_m, m_to_ft
 
 NGS_GEOID_URL = "https://geodesy.noaa.gov/api/geoid/ght"
@@ -99,16 +100,110 @@ def fetch_geoid_separation(lat: float, lon: float, *, timeout: float = 20.0,
     return sep
 
 
+# --- stations ---------------------------------------------------------------
+#
+# A station is the physical point a rod was read on. The level network solves
+# one elevation per station, so two readings share an unknown exactly when
+# they share a station - which is how a benchmark read at the open and the
+# close of a setup, or from two setups, checks itself.
+#
+#   plan shot         "P<number>" (set by `Plan.to_frame`)
+#   SW Maps record    its `station` attribute when set; otherwise its feature
+#                     name when that is "P12" or a declared control mark;
+#                     otherwise its SW Maps ID, kept as an int
+#
+# Keeping plan numbers and SW Maps IDs apart matters: plan #1 and SW Maps
+# record 1 are different points, and solving them as one put ±31.8 in
+# residuals into the network.
+
+PLAN_STATION = re.compile(r"^P\d+$", re.IGNORECASE)
+
+
+def station_key(value) -> int | str | None:
+    """A station name in its canonical form, or None for a blank.
+
+    A bare integer is an int, so SW Maps IDs and a benchmark typed as "12"
+    agree; anything else is the stripped text in upper case, so "bm1" and
+    "BM1" are the same mark.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, np.integer)):
+        return int(value)
+    if isinstance(value, (float, np.floating)):
+        if math.isnan(value):
+            return None
+        return int(value) if float(value).is_integer() else str(value)
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    text = str(value).strip()
+    if not text:
+        return None
+    if re.fullmatch(r"\d+(?:\.0*)?", text):
+        return int(float(text))
+    return text.upper()
+
+
+def sort_stations(keys) -> list:
+    """Integers first, in order, then names."""
+    keys = set(keys)
+    return (sorted(k for k in keys if isinstance(k, int))
+            + sorted(str(k) for k in keys if not isinstance(k, int)))
+
+
+def describe_stations(keys) -> str:
+    """"1-12, P1, P2, BM1" - a short list for a message."""
+    keys = sort_stations(keys)
+    ints = [k for k in keys if isinstance(k, int)]
+    names = [k for k in keys if not isinstance(k, int)]
+    parts = []
+    if ints:
+        parts.append(f"{ints[0]}-{ints[-1]}" if len(ints) > 1 else str(ints[0]))
+    parts += names[:8] + (["..."] if len(names) > 8 else [])
+    return ", ".join(parts) or "none"
+
+
+def stations(spots: PointSet, marks=()) -> pd.Series:
+    """The station each row was read on, as `station_key` values."""
+    d = spots.df
+    marks = {str(m).strip().upper() for m in marks}
+    explicit = d[STATION] if STATION in d.columns else None
+    names = d["feature_name"] if "feature_name" in d.columns else None
+    ids = d["point_id"] if "point_id" in d.columns else None
+    out = []
+    for i in d.index:
+        key = station_key(explicit.at[i]) if explicit is not None else None
+        if key is None and names is not None and isinstance(names.at[i], str):
+            name = names.at[i].strip().upper()
+            if PLAN_STATION.match(name) or name in marks:
+                key = name
+        if key is None and ids is not None:
+            key = station_key(ids.at[i])
+        if key is None:
+            key = f"#{i}"                 # no identity at all: its own point
+        out.append(key)
+    return pd.Series(out, index=d.index, dtype=object)
+
+
+def _station_of(unknown: str) -> int | str:
+    """"EL:12" -> 12, "EL:P12" -> "P12"."""
+    name = unknown.split(":", 1)[1]
+    return int(name) if name.isdigit() else name
+
+
 # --- laser level network --------------------------------------------------
 
 @dataclass
 class LevelNetwork:
-    """Solved laser levelling: instrument heights and point elevations."""
+    """Solved laser levelling: instrument heights and station elevations."""
 
     adjustment: Adjustment
-    elevations: dict[int, float]        # point id -> elevation, metres
+    elevations: dict[int | str, float]  # station -> elevation, metres
     instrument_heights: dict[str, float]  # setup id -> HI, metres
-    benchmark: int
+    benchmark: int | str
     benchmark_elev_m: float
 
     def describe(self) -> str:
@@ -116,7 +211,7 @@ class LevelNetwork:
                                                                  scale=1 / M_PER_IN)]
         for setup, hi in sorted(self.instrument_heights.items()):
             lines.append(f"  setup {setup}: HI {m_to_ft(hi):.4f} ft")
-        lines.append(f"  benchmark: point {self.benchmark} held at "
+        lines.append(f"  benchmark: station {self.benchmark} held at "
                      f"{m_to_ft(self.benchmark_elev_m):.3f} ft")
         if not self.adjustment.has_redundancy:
             lines.append(
@@ -152,16 +247,19 @@ def resolve_setups(spots: PointSet, column: str = SETUP) -> pd.Series:
          for v, raw in zip(numeric, s)], index=d.index)
 
 
-def level_network(spots: PointSet, *, benchmark_id: int = 1,
+def level_network(spots: PointSet, *, benchmark_id: int | str = 1,
                   benchmark_elev_ft: float = 100.0,
-                  rod_sigma_in: float = 0.125) -> LevelNetwork:
-    """Solve instrument heights and point elevations from rod readings.
+                  rod_sigma_in: float = 0.125,
+                  marks=()) -> LevelNetwork:
+    """Solve instrument heights and station elevations from rod readings.
 
-    Observation equation, per shot:  HI(setup) - elevation(point) = rod
+    Observation equation, per shot:  HI(setup) - elevation(station) = rod
 
-    All in metres internally. `rod_sigma_in` is the assumed reading precision;
-    it scales the reported standard errors but not the solution, since every
-    reading carries the same weight.
+    Unknowns are keyed by station (see `stations`), so every reading on the
+    same physical point shares one elevation. All in metres internally.
+    `rod_sigma_in` is the assumed reading precision; it scales the reported
+    standard errors but not the solution, since every reading carries the
+    same weight.
     """
     d = spots.df
     if ROD_IN not in d.columns:
@@ -172,16 +270,16 @@ def level_network(spots: PointSet, *, benchmark_id: int = 1,
         raise ValueError("no usable rod readings")
 
     setups = resolve_setups(spots)
-    ids = (d["point_id"] if "point_id" in d.columns
-           else pd.Series(range(len(d)), index=d.index))
+    names = stations(spots, marks)
+    benchmark_id = station_key(benchmark_id)
 
     ls = LeastSquares()
     weight = 1.0 / (rod_sigma_in * M_PER_IN) ** 2
     for i in d.index[have]:
         rod_m = float(d.at[i, ROD_IN]) * M_PER_IN
-        pid = int(ids.at[i])
-        ls.add({f"HI:{setups.at[i]}": 1.0, f"EL:{pid}": -1.0}, rod_m,
-               weight=weight, label=f"point {pid} from setup {setups.at[i]}")
+        st = names.at[i]
+        ls.add({f"HI:{setups.at[i]}": 1.0, f"EL:{st}": -1.0}, rod_m,
+               weight=weight, label=f"station {st} from setup {setups.at[i]}")
 
     bench_m = ft_to_m(benchmark_elev_ft)
     ls.constrain(f"EL:{benchmark_id}", bench_m, weight=weight * 1e6)
@@ -203,7 +301,7 @@ def level_network(spots: PointSet, *, benchmark_id: int = 1,
 
     return LevelNetwork(
         adjustment=adj,
-        elevations={int(k.split(":", 1)[1]): v
+        elevations={_station_of(k): v
                     for k, v in adj.values.items() if k.startswith("EL:")},
         instrument_heights={k.split(":", 1)[1]: v
                             for k, v in adj.values.items() if k.startswith("HI:")},
@@ -395,13 +493,12 @@ def datum_shift_for(elev_m: float, target_ft: float) -> float:
     return ft_to_m(target_ft) - elev_m
 
 
-def spots_with_laser_elevations(spots: PointSet, network: LevelNetwork
-                                ) -> PointSet:
+def spots_with_laser_elevations(spots: PointSet, network: LevelNetwork,
+                                marks=()) -> PointSet:
     """Attach solved laser elevations to the spot layer as the ELEV column."""
     d = spots.df.copy()
-    ids = d["point_id"].astype("Int64")
-    d[ELEV] = [network.elevations.get(int(i)) if pd.notna(i) else None
-               for i in ids]
+    d[ELEV] = [network.elevations.get(st, np.nan)
+               for st in stations(spots, marks)]
     keep = d[ELEV].notna()
     return spots.select(keep.to_numpy(), "has laser elevation").with_frame(
         d.loc[keep].reset_index(drop=True), "laser elevations")
@@ -500,13 +597,14 @@ class VerticalModel:
 
 def solve_vertical(tracks: PointSet, spots: PointSet | None = None, *,
                    mode: str = "local",
-                   benchmark_id: int = 1,
+                   benchmark_id: int | str = 1,
                    benchmark_elev_ft: float = 100.0,
                    radius_m: float = 1.0,
                    geoid: GeoidSeparation | None = None,
                    tied_to_model: bool = False,
                    model_frame: str = "",
-                   lawn_kinds: tuple[str, ...] = ("lawn",)) -> VerticalModel:
+                   lawn_kinds: tuple[str, ...] = ("lawn",),
+                   marks=()) -> VerticalModel:
     """Work out the full vertical model from the data available.
 
     The chain, in the order the information actually flows:
@@ -538,19 +636,17 @@ def solve_vertical(tracks: PointSet, spots: PointSet | None = None, *,
         lawn = KindSelect(names=list(lawn_kinds)).apply(spots)
         d = spots.df
         if ROD_IN in d.columns and d[ROD_IN].notna().any():
-            rod = d[d[ROD_IN].notna()]
-            ids = set(rod["point_id"].dropna().astype(int)) \
-                if "point_id" in rod.columns else set()
-            if ids and benchmark_id not in ids:
+            shot = set(stations(spots, marks)[d[ROD_IN].notna()])
+            if station_key(benchmark_id) not in shot:
                 # Silently falling back would produce a surface on a datum the
                 # user believes is tied when it is not.
                 raise ValueError(
                     f"benchmark point {benchmark_id} is not among the rod "
-                    f"shots ({min(ids)}-{max(ids)}). Pick a point that was "
-                    "actually shot, or clear the datum tie.")
+                    f"shots ({describe_stations(shot)}). Pick a point that "
+                    "was actually shot, or clear the datum tie.")
             model.level = level_network(
                 spots, benchmark_id=benchmark_id,
-                benchmark_elev_ft=benchmark_elev_ft)
+                benchmark_elev_ft=benchmark_elev_ft, marks=marks)
 
     # --- session offsets ---
     combined = concat([tracks, lawn]) if lawn is not None and len(lawn) else tracks
@@ -582,7 +678,7 @@ def solve_vertical(tracks: PointSet, spots: PointSet | None = None, *,
             "elevations remain on the reference session's arbitrary frame")
         return model
 
-    reference = spots_with_laser_elevations(lawn, model.level)
+    reference = spots_with_laser_elevations(lawn, model.level, marks)
     if len(reference) == 0:
         model.notes.append(
             "no terrain rod shots (lawn) carry a laser elevation, so the local "

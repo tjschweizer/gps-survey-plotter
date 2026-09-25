@@ -261,6 +261,35 @@ def test_a_rod_reading_in_feet_and_inches_is_read(tmp_path):
     assert d[P.ROD_IN].iloc[0] == pytest.approx(63.25)
 
 
+def test_a_shot_named_after_its_plan_number_is_that_station(tmp_path):
+    """Recording a planned shot as "P12" is how it is matched to the plan."""
+    from gpsrtk.vertical import stations
+
+    db = _db(tmp_path / "named.swm2", features=True, attributes=True)
+    con = sqlite3.connect(db)
+    con.execute("UPDATE features SET name='p12' WHERE uuid='f1'")
+    con.commit()
+    con.close()
+    exp = read_any(db)
+    assert list(stations(exp["spot_heights"])) == ["P12"]
+    assert exp["track_points"].df["feature_name"].isna().all()
+
+
+def test_the_station_attribute_is_read(tmp_path):
+    from gpsrtk.vertical import stations
+
+    db = _db(tmp_path / "station.swm2", features=True, attributes=True)
+    con = sqlite3.connect(db)
+    con.execute("INSERT INTO attribute_fields VALUES "
+                "('stn','lyr','station','text','',2)")
+    con.execute("INSERT INTO attribute_values VALUES ('f1','stn','text','BM1')")
+    con.commit()
+    con.close()
+    ps = read_any(db)["spot_heights"]
+    assert ps.df[P.STATION].iloc[0] == "BM1"
+    assert list(stations(ps)) == ["BM1"]
+
+
 def test_the_raw_log_is_reported_but_not_parsed(swmz):
     exp = read_any(swmz)
     assert "raw_logs" in exp.tables

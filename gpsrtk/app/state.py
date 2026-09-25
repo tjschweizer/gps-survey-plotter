@@ -820,12 +820,16 @@ class AppState:
         self.statusMessage.emit(f"Saved {saved.name}")
         return saved
 
-    def spot_ids(self) -> list[int]:
-        """Point ids a benchmark can be chosen from."""
+    def spot_ids(self) -> list:
+        """Stations a benchmark can be chosen from: ints first, then names."""
+        from ..model.pointset import ROD_IN
+        from ..vertical import sort_stations, stations
+
         spots = self.spots
-        if spots is None or "point_id" not in spots.df.columns:
+        if spots is None or ROD_IN not in spots.df.columns:
             return []
-        return sorted(int(i) for i in spots.df["point_id"].dropna().unique())
+        shot = spots.df[ROD_IN].notna()
+        return sort_stations(stations(spots)[shot])
 
     def set_datum_tie(self, *, point, elev_ft: float, note: str = "",
                       frame: str = "", tied: bool = False
@@ -836,8 +840,17 @@ class AppState:
         changed, so a surface that still claimed the old datum would be
         wrong. Returns the new model when there was one to re-solve.
         """
+        from ..vertical import describe_stations, station_key
         from .datum import apply_tie
 
+        # Any name is a valid station, so a typo would otherwise be stored
+        # without complaint and only fail at the next solve.
+        shot = self.spot_ids()
+        key = station_key(point)
+        if key is not None and shot and key not in shot:
+            raise ValueError(
+                f"'{point}' is not a point id: no rod shot was read on it "
+                f"(shot: {describe_stations(shot)}).")
         apply_tie(self.site, point=point, elev_ft=elev_ft, note=note,
                   frame=frame, tied=tied)
         self.siteChanged.emit()

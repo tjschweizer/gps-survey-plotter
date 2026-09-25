@@ -30,7 +30,7 @@ import pandas as pd
 from ..model.pointset import (
     PointSet, E, N, Z, LAT, LON, TIME, TZ, FIX, HACC, VACC, SPEED, BEARING,
     PDOP, HDOP, VDOP, SATS_VIEW, SATS_USED, ANT_HT, ROD_IN, SETUP, KIND,
-    TRACK, SOURCE, SESSION,
+    STATION, TRACK, SOURCE, SESSION,
 )
 from .base import (SurveyExport, SurveyReader, register_reader, normalise_kind,
                    numeric, parse_time, rod_readings)
@@ -62,6 +62,7 @@ ALIASES = {
     "height number": ROD_IN,
     "base position": SETUP,
     "type": KIND,
+    "station": STATION,
     "notes": "notes",
 }
 

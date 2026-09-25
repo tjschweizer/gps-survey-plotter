@@ -48,7 +48,7 @@ import pandas as pd
 from ..model.pointset import (
     AGE_DIFF, ANT_HT, BASELINE, BEARING, E, FIX, HACC, HDOP, KIND, LAT, LON,
     N, PDOP, REF_STATION, ROD_IN, SATS_USED, SATS_VIEW, SESSION, SETUP, SOURCE,
-    SPEED, TIME, TRACK, TZ, VACC, VDOP, Z, PointSet,
+    SPEED, STATION, TIME, TRACK, TZ, VACC, VDOP, Z, PointSet,
 )
 from .base import (SurveyExport, SurveyReader, normalise_kind, numeric,
                    register_reader, rod_readings)
@@ -81,6 +81,7 @@ ATTRIBUTE_ALIASES = {
     "height number": ROD_IN,
     "base position": SETUP,
     "type": KIND,
+    "station": STATION,
     "notes": "notes",
 }
 
@@ -319,6 +320,10 @@ def _finish(points: pd.DataFrame, labels: dict, attrs: pd.DataFrame,
 
     df["_layer"] = df["fid"].map(lambda f: labels.get(f, ("points", ""))[0])
     df[TRACK] = df["fid"].map(lambda f: labels.get(f, ("points", ""))[1])
+    # A recorded shot's name is its feature name, as in the CSV export; a
+    # plan shot recorded as "P12" is matched to its station by it.
+    if (df["_layer"] != TRACK_LAYER).any():
+        df["feature_name"] = df[TRACK].where(df["_layer"] != TRACK_LAYER)
 
     df[TIME], df[TZ] = _local_times(df["time"])
     df = _expand_pos_data(df)

@@ -372,7 +372,8 @@ class Plan:
                 continue
             e, n, method, sigma = self.resolve(p.number)
             rows.append({
-                "point_id": p.number, "e": e, "n": n,
+                "point_id": p.number, "station": f"P{p.number}",
+                "e": e, "n": n,
                 "rod_in": p.rod_in, "setup": p.setup or "0",
                 # `kind` drives the surfacing filters. Only terrain shots are
                 # lawn; a building corner is an accurate point that would be a

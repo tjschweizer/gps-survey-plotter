@@ -29,7 +29,7 @@ TIED_NOTE = ("Exports will be labelled as tied. Only check this once the "
 LOCAL_NOTE = "Datum stays local and arbitrary. Exports will say so."
 
 
-def tie_form(site, spot_ids: list[int]) -> dict:
+def tie_form(site, spot_ids: list) -> dict:
     """What the datum tie dialog shows."""
     v = site.vertical
     return {
@@ -47,12 +47,18 @@ def tie_form(site, spot_ids: list[int]) -> dict:
 
 def apply_tie(site, *, point, elev_ft: float, note: str = "",
               frame: str = "", tied: bool = False) -> None:
-    """Write the tie onto the site. Raises ValueError for a bad point id."""
+    """Write the tie onto the site. Raises ValueError for a bad point id.
+
+    The point is a station: a bare integer is a SW Maps ID and is stored as
+    an int, as before; anything else ("P12", "BM1") is stored as its
+    canonical name.
+    """
+    from ..vertical import station_key
+
     v = site.vertical
-    try:
-        point_id = int(float(str(point).strip()))
-    except ValueError as exc:
-        raise ValueError(f"'{point}' is not a point id") from exc
+    point_id = station_key(point)
+    if point_id is None:
+        raise ValueError(f"'{point}' is not a point id")
     try:
         elev = float(elev_ft)
     except (TypeError, ValueError) as exc:
