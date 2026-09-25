@@ -18,3 +18,11 @@ site.local.json
 *.zip
 field_sheet.html
 *_ORIGIN.txt
+
+# Exports saved into the checkout. A world file holds absolute UTM
+# coordinates, and a heightmap, points file or figure locates the lot too.
+*.pgw
+heightmap_*
+revit_points*.csv
+slope_map*.png
+contours_*.png

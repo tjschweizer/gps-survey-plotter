@@ -214,8 +214,8 @@ These answers change the designs in section 5.
 | 34 | A8 | Start panel and recent files | UI | ✅ `9c90e3f` |
 | 35 | C29 | Solve report wording | UI | ✅ `eae8315` |
 | 36 | C10 | World file on the grid | processing | ✅ `2143862` |
-| 37 | C24 | Surface smoothing sized in metres | processing | ✅ |
-| 38 | C26 | .gitignore covers exports | code health | todo |
+| 37 | C24 | Surface smoothing sized in metres | processing | ✅ `116824f` |
+| 38 | C26 | .gitignore covers exports | code health | ✅ |
 | 39 | C27 | Atomic saves | code health | todo |
 | 40 | C28 | Server hardening | code health | todo |
 | 41 | C30 | Hide the do-nothing surface-residual stage | code health | todo |
@@ -1267,7 +1267,11 @@ Evidence for these is in the review screenshots: synthetic export,
   the mask; confirm with a local findings run.
 - **Breaking?:** exported heightmaps become smoother. Approved.
 
-**C26 — .gitignore covers exports**
+**C26 — .gitignore covers exports** ✅
+- **Done:** added `*.pgw`, `heightmap_*`, `revit_points*.csv`,
+  `slope_map*.png`, `contours_*.png`. `git check-ignore` confirms each of
+  the export names the server offers (including in a subfolder), and `git
+  ls-files -ci --exclude-standard` lists no tracked file caught by them.
 - **What:** add `*.pgw`, `heightmap_*`, `revit_points*.csv`, `slope_map*.png`
   and `contours_*.png`.
 - **Why:** the world file holds absolute UTM coordinates (`raster.py:57`),
