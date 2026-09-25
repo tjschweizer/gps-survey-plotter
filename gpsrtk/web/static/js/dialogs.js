@@ -6,6 +6,8 @@
 
 import { h, clear } from "./dom.js";
 
+const SEVERITY = { info: "Note", warning: "Warning", error: "Error", confirm: "Confirm" };
+
 function modal(level, title, body, buttons, { onOpen, cls } = {}) {
   return new Promise((resolve) => {
     const dlg = h("dialog", { class: [level, cls].filter(Boolean).join(" ") });
@@ -17,8 +19,12 @@ function modal(level, title, body, buttons, { onOpen, cls } = {}) {
                    onclick: () => close(b.value ?? null) }, b.label)
         : h("button", { class: b.primary ? "primary" : "", type: "button",
                         onclick: () => (b.run ? b.run(close) : close(b.value)) }, b.label)));
+    // Severity in a word as well as the badge's colour, which not everyone
+    // can tell apart.
+    const word = SEVERITY[level];
     dlg.append(h("div", { class: "dlg" },
-      h("div", { class: "dlg-title" }, h("span", { class: "badge" }), title),
+      h("div", { class: "dlg-title" }, h("span", { class: "badge", "aria-hidden": "true" }),
+        word ? h("span", { class: "severity" }, word) : null, title),
       body, bar));
     dlg.addEventListener("close", () => { dlg.remove(); resolve(result); });
     dlg.addEventListener("cancel", () => { result = null; });
@@ -81,7 +87,7 @@ export function showToast({ title, text, monospace = false, actions = [] }, onAc
 
 export async function confirmDialog(title, text, { yes = "Yes", no = "No" } = {}) {
   const body = h("div", { class: "dlg-body" }, text);
-  return (await modal("warning", title, body,
+  return (await modal("confirm", title, body,
     [{ label: no, value: false }, { label: yes, value: true, primary: true }])) === true;
 }
 

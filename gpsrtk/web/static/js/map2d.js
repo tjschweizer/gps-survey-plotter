@@ -42,7 +42,10 @@ export const controls = {
   interval: byId("contour-interval"),
   drainage: byId("show-drainage"),
 };
-const ARROW_COLOUR = "#1fb4c8";
+// The drainage arrows' colour lives in the stylesheet (--arrow), with the
+// legend glyph that stands for them.
+const ARROW_COLOUR = getComputedStyle(document.documentElement)
+  .getPropertyValue("--arrow").trim() || "#0e7c8c";
 const ARROW_SPACING_M = 1.5;
 for (const name of COLOR_BY) controls.colorBy.append(new Option(name, name));
 for (const name of COLORMAPS) controls.cmap.append(new Option(name, name));
@@ -88,7 +91,7 @@ function contourStyle(feature) {
                                     width: major ? 1.2 : 0.7 }),
       text: major ? new ol.style.Text({
         text: String(feature.get("cm")), placement: "line", repeat: 320,
-        font: "600 11px system-ui, sans-serif",
+        font: "600 12px system-ui, sans-serif",
         fill: new ol.style.Fill({ color: "#111" }),
         stroke: new ol.style.Stroke({ color: "rgba(255,255,255,0.9)", width: 3 }),
       }) : undefined,
@@ -186,7 +189,7 @@ function spotStyle(feature, resolution) {
   return new ol.style.Style({
     image: spotSquare,
     text: new ol.style.Text({
-      text, offsetY: -16, textBaseline: "bottom", font: "600 11px system-ui, sans-serif",
+      text, offsetY: -16, textBaseline: "bottom", font: "600 12px system-ui, sans-serif",
       fill: new ol.style.Fill({ color: "#5a0000" }),
       stroke: new ol.style.Stroke({ color: "rgba(255,255,255,0.9)", width: 3 }),
     }),

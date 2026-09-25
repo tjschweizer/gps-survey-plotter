@@ -723,3 +723,66 @@ def test_at_1280_the_legend_keeps_off_the_survey(browser, live):
         assert right_edge <= box["x"] + 1, "the framed survey ends left of the legend"
     finally:
         context.close()
+
+
+CONTRAST_JS = """([fgSel, bgSel, fgProp, bgProp]) => {
+    const rgb = (s) => s.match(/[\d.]+/g).slice(0, 3).map(Number);
+    const lum = ([r, g, b]) => {
+        const f = (c) => { c /= 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
+        return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+    };
+    const style = (sel) => getComputedStyle(document.querySelector(sel));
+    const a = lum(rgb(style(fgSel)[fgProp])), b = lum(rgb(style(bgSel)[bgProp]));
+    return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+}"""
+
+
+def _contrast(page, fg, bg, fg_prop="color", bg_prop="backgroundColor"):
+    # Opacity is not part of a computed colour, and fading by opacity is
+    # exactly how these used to fail - so nothing on the way up may fade.
+    faded = page.evaluate("""(sel) => {
+        let el = document.querySelector(sel), o = 1;
+        for (; el; el = el.parentElement) o *= Number(getComputedStyle(el).opacity);
+        return o;
+    }""", fg)
+    assert faded == 1, f"{fg} is faded to {faded}"
+    return page.evaluate(CONTRAST_JS, [fg, bg, fg_prop, bg_prop])
+
+
+def test_text_and_borders_meet_wcag_aa(page, live, two_sessions):
+    """The pairs the review measured below AA: 4.5:1 for text, 3:1 for
+    component borders."""
+    # A stage that is switched off: the speed filter, off by default.
+    off = "#panel-chain .stage.off .stage-name"
+    assert _contrast(page, off, "#panel-chain .panel, #panel-chain") >= 4.5
+    # A hidden session's numbers.
+    live.state.set_session_visible("Outing 2/2026-09-27", False)
+    page.evaluate("() => window.yardsurvey.refresh()")
+    page.wait_for_timeout(300)
+    hidden = "#panel-sessions .session.hidden-session"
+    assert _contrast(page, hidden + " .metrics", hidden) >= 4.5
+    live.state.set_session_visible("Outing 2/2026-09-27", True)
+    # Muted text on the page background.
+    page.evaluate("() => document.body.insertAdjacentHTML('beforeend', "
+                  "'<span id=probe class=muted>x</span>')")
+    assert _contrast(page, "#probe", "body") >= 4.5
+    # The drainage glyph in the legend, on the legend.
+    page.check("#show-drainage")
+    page.wait_for_timeout(300)
+    assert _contrast(page, ".map-legend .note .arrow", ".map-legend") >= 4.5
+    page.uncheck("#show-drainage")
+    # Input borders against the white field.
+    assert _contrast(page, "#slope-max", "#slope-max", "borderTopColor") >= 3.0
+
+
+def test_dialogs_say_their_severity_in_words(page, live):
+    seed(live, page, (E0, N0))
+    cell = row_cell(page, 1, "rod")
+    cell.click()
+    cell.click()
+    page.keyboard.type("forty")
+    page.keyboard.press("Enter")
+    dialog = page.locator("dialog[open]")
+    dialog.wait_for()
+    assert dialog.locator(".dlg-title .severity").inner_text().lower() == "warning"
+    dialog.locator("button").last.click()

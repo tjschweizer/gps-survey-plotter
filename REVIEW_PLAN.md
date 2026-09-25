@@ -115,6 +115,7 @@ These were set by the owner and apply to every item.
 | After C15 | 419 passed, 51 skipped, 46 deselected | 41 passed |
 | After C16 | 420 passed, 51 skipped, 47 deselected | 42 passed |
 | After C17 | 420 passed, 51 skipped, 49 deselected | 44 passed |
+| After C18 | 420 passed, 51 skipped, 51 deselected | 46 passed |
 
 Of the 55 skips, 50 need real data. The other 5 are network tests that the
 sandbox proxy refused.
@@ -194,8 +195,8 @@ These answers change the designs in section 5.
 | 24 | C14 | Points drawn under the surface's weight | UI | ✅ `2b7d33e` |
 | 25 | C15 | Success reports stop being modal | UI | ✅ `67b579a` |
 | 26 | C16 | Consistent units in 2D, 3D and layers | UI | ✅ `4eec96e` |
-| 27 | C17 | Legend: ticks, marker key, no overlap | UI | ✅ |
-| 28 | C18 | Contrast, colour tokens, type and spacing scale | UI | todo |
+| 27 | C17 | Legend: ticks, marker key, no overlap | UI | ✅ `b336ab9` |
+| 28 | C18 | Contrast, colour tokens, type and spacing scale | UI | ✅ |
 | 29 | C19 | Rod column second, in the table and the field sheet | UI | todo |
 | 30 | C20 | Readable filter stack | UI | todo |
 | 31 | C21 | Grouped fetch errors and a short connect timeout | UI | todo |
@@ -1061,7 +1062,22 @@ Evidence for these is in the review screenshots: synthetic export,
 - **Verify:** browser test at 1280×720.
 - **Breaking?:** no.
 
-**C18 — Contrast, colour tokens, type and spacing scale**
+**C18 — Contrast, colour tokens, type and spacing scale** ✅
+- **Done:** `--muted` #5f6771 (4.93:1 on `--bg`, ≥4.9 on white and tinted
+  rows); `--border-strong` #878f98 (3.27:1 on white, 3.08 on buttons); the
+  drainage colour `--arrow` #0e7c8c (4.91:1), which `map2d.js` now reads
+  from the stylesheet for the map arrows too. A switched-off filter stage
+  is muted and italic instead of opacity 0.45; a hidden session gets a
+  dashed outline and the page tint instead of opacity 0.55. All ten listed
+  colours are `:root` tokens (plus the legend's pens); every `font-size:
+  11px` is 12 px, and the canvas labels in `map2d.js`/`planmap.js` too;
+  padding, margin and gap are on a 4 px scale (2 px as a half step; tokens
+  `--s1`..`--s4`). Dialogs name their severity in a word ("Warning",
+  "Error", "Note", "Confirm"; confirmations now use a `confirm` level).
+  Tests: `test_web_browser.py::test_text_and_borders_meet_wcag_aa` (computes
+  the ratios in the page and also requires no fading by opacity - it fails
+  on the old stylesheet with "faded to 0.45"),
+  `::test_dialogs_say_their_severity_in_words`.
 - **What:** raise the pairs that fail WCAG AA (4.5:1 text, 3:1 component
   borders) in `app.css`, plus a small change in `dialogs.js`:
 

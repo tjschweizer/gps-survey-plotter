@@ -50,7 +50,7 @@ function transectStyle(f) {
   return new ol.style.Style({
     stroke: new ol.style.Stroke({ color: rgba(GROUP_PEN.guide, 0.85), width: 3, lineDash: [2, 6] }),
     text: new ol.style.Text({
-      text: `${f.get("line_id")}: walk first`, placement: "line", font: "600 11px system-ui, sans-serif",
+      text: `${f.get("line_id")}: walk first`, placement: "line", font: "600 12px system-ui, sans-serif",
       fill: new ol.style.Fill({ color: rgba(GROUP_PEN.guide) }),
       stroke: new ol.style.Stroke({ color: "rgba(255,255,255,0.9)", width: 3 }),
     }),
@@ -67,7 +67,7 @@ map.addLayer(new ol.layer.Vector({
       stroke: new ol.style.Stroke({ color: "#000", width: 1.2 }),
     }),
     text: new ol.style.Text({
-      text: f.get("name"), offsetY: 16, font: "600 11px system-ui, sans-serif",
+      text: f.get("name"), offsetY: 16, font: "600 12px system-ui, sans-serif",
       fill: new ol.style.Fill({ color: "#5a3000" }),
       stroke: new ol.style.Stroke({ color: "rgba(255,255,255,0.9)", width: 3 }),
     }),
