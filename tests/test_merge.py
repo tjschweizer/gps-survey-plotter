@@ -351,20 +351,43 @@ def test_merged_sessions_can_be_solved(fresh, synthetic_zip, synthetic_outing2):
     assert second == pytest.approx(0.05, abs=0.01)
 
 
-def test_moving_points_pair_within_30_cm_and_static_shots_within_a_metre():
-    """One overlap definition: 30 cm between passes, 1 m to a static shot."""
-    a = _set("A", n=4)
-    b = _set("B", n=4, day=DAY + pd.Timedelta(days=7))
-    b[P.N] += 0.6                     # 60 cm north of A: too far for passes
+def test_passes_meet_by_cell_and_static_shots_within_a_metre():
+    """One overlap definition: a 0.5 m cell both passes cover, or a static
+    shot within 1 m of the other session."""
+    a = _set("A", n=8)
+    b = _set("B", n=8, day=DAY + pd.Timedelta(days=7))
+    b[P.N] += 0.6                     # 60 cm north of A: other cells
     assert M.session_overlap(_ps(a, b)) == {}
     b[P.KIND] = "lawn"                # ...but B's points are static shots
-    ps = _ps(a, b)
-    pairs = M.overlap_pairs(ps)
-    assert len({tuple(sorted(p)) for p in pairs.tolist()}) == len(pairs)
-    sessions = ps.df[P.SESSION].to_numpy()
-    between = int((sessions[pairs[:, 0]] != sessions[pairs[:, 1]]).sum())
-    assert between > 0
-    assert M.session_overlap(ps)[("A", "B")] == between
+    obs = M.overlap_observations(_ps(a, b))
+    assert set(obs.kind) == {"shot"}
+    # One observation per shot and session, each shot having A within 1 m.
+    assert len(obs) == 8
+    assert M.session_overlap(_ps(a, b)) == {("A", "B"): 8}
+
+
+def test_a_shared_cell_is_one_observation_however_many_points():
+    """A cell two passes cover is one observation, at their median heights."""
+    a = _set("A", n=8)                                  # 2 m of pass, 4 cells
+    b = _set("B", n=8, day=DAY + pd.Timedelta(days=7), offset=0.05)
+    obs = M.overlap_observations(_ps(a, b))
+    assert len(obs) == 4 and set(obs.kind) == {"cell"}
+    assert obs.dz == pytest.approx([0.05] * 4)
+
+
+def test_a_stop_is_one_cell_not_millions_of_pairs():
+    """Five minutes stationary at 10 Hz is 3,000 points on one spot. As raw
+    pairs against another visit that was millions of observations of one
+    patch of ground; as cells it is one."""
+    a = _set("A", n=40)
+    b = _set("B", n=40, day=DAY + pd.Timedelta(days=7), offset=0.05)
+    moving = len(M.overlap_observations(_ps(a, b)))
+    stop = b.iloc[[10] * 3000].copy()
+    stop[P.TIME] = stop[P.TIME].iloc[0] + pd.to_timedelta(
+        np.arange(3000) * 0.1, "s")
+    stopped = M.overlap_observations(_ps(a, b, stop))
+    assert len(stopped) == moving
+    assert np.median(stopped.dz) == pytest.approx(0.05, abs=1e-6)
 
 
 def test_the_merge_report_and_the_solve_agree_on_a_spot_outing(fresh, synthetic_zip,
@@ -386,7 +409,7 @@ def test_the_merge_report_and_the_solve_agree_on_a_spot_outing(fresh, synthetic_
     names = {s.name for s in report.sessions}
     assert "Spots/2026-09-03" in names
     assert report.reconcilable and not report.unlinked
-    assert "static shots" in report.describe()
+    assert "static shots compared within 1 m" in report.describe()
 
     model = fresh.solve_vertical("ellipsoidal")
     assert not model.sessions.unresolved

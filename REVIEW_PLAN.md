@@ -100,6 +100,7 @@ These were set by the owner and apply to every item.
 | After C2 | 354 passed, 51 skipped, 40 deselected | 35 passed |
 | After C25 | 363 passed, 51 skipped, 40 deselected | 35 passed |
 | After C6 | 365 passed, 51 skipped, 40 deselected | 35 passed |
+| After O1 | 367 passed, 51 skipped, 40 deselected | 35 passed |
 
 Of the 55 skips, 50 need real data. The other 5 are network tests that the
 sandbox proxy refused.
@@ -163,8 +164,8 @@ These answers change the designs in section 5.
 | 8 | C1 | Every rod shot joins the level network | processing | ✅ `0cc6dc4` |
 | 9 | C2 | Station identities: plan shots vs SW Maps records | processing | ✅ `37b38bb` (**meaning changed**) |
 | 10 | C25 | Split sessions where the data proves a mount change | processing | ✅ `0817709` (**session names change**) |
-| 11 | C6 | One overlap definition for the merge report and the solve | processing | ✅ |
-| 12 | O1 | Session offsets from cell differences | processing | todo |
+| 11 | C6 | One overlap definition for the merge report and the solve | processing | ✅ `06f3c15` |
+| 12 | O1 | Session offsets from cell differences | processing | ✅ |
 | 13 | O2 | Compute crossovers and slope once | code health | todo |
 | 14 | O3 | Filter-chain cache keyed by a token | code health | todo |
 | 15 | C3 | Heights labelled by vertical model | processing | todo |
@@ -516,7 +517,31 @@ updating after a local run. Report that; don't guess.
 - **Breaking?:** stored models are unchanged. A re-solve may move offsets by a
   few millimetres. Real-data tests need a local run.
 
-**O1 — Session offsets from cell differences**
+**O1 — Session offsets from cell differences** ✅
+- **Done:** `merge.overlap_observations` (returns an `Overlap`: unknowns
+  `a`/`b`, `dz`, real sessions, `kind` "cell"/"shot") replaces C6's
+  `overlap_pairs`. Cells are `CELL_M` = 0.5 m, anchored at 0,0; a cell
+  covered by two unknowns gives one observation at their medians, if their
+  median times are more than `min_seconds` apart. Each static shot gives one
+  observation per other unknown within 1 m (median of that unknown's
+  points there). The C6 static-shot unknowns carry over (`STATIC_SUFFIX`
+  now lives in `merge`). `session_offsets` adds one weight-1 row per
+  observation, so the standard errors come from the scatter between cells;
+  its `radius_m` is now the cell size (default 0.5, and `solve_vertical`'s
+  default is 0.5), which keeps `test_session_offsets_recover_an_injected_bias`
+  (`radius_m=0.5`, `min_seconds=0`) meaningful. `session_overlap` counts
+  the same observations, and the merge report heading says "0.5 m cells
+  both sessions cover, and N static shots compared within 1 m". `THIN_OVERLAP`
+  (25) now counts observations. `qc` is untouched. Control-mark ties (step
+  3) come with A3.
+- **Numbers:** synthetic merge, +5 cm injected: 27,017 raw pairs, +5.00 ±
+  0.01 cm before; 3,454 cell observations, +4.98 ± 0.03 cm after; solve
+  0.19 s.
+- **Tests:** `test_merge.py::test_passes_meet_by_cell_and_static_shots_within_a_metre`,
+  `::test_a_shared_cell_is_one_observation_however_many_points`,
+  `::test_a_stop_is_one_cell_not_millions_of_pairs`; the C6 and merge tests
+  still pass (`test_merged_sessions_can_be_solved` at 0.05 ± 0.01 m).
+  **Needs a local real-data run.**
 - **What:** `vertical.session_offsets` switches from raw 10 Hz point pairs to
   0.5 m cells, anchored at 0,0, which is the same grid as the site origin:
   1. **Track-to-track:** for each cell occupied by ≥ 2 sessions, take each

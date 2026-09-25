@@ -32,7 +32,6 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from . import qc
 from .model.adjust import Adjustment, LeastSquares
 from .model.pointset import (PointSet, E, N, Z, ELEV, ROD_IN, SETUP, SESSION,
                              STATION, LAT, LON)
@@ -40,9 +39,6 @@ from .units import M_PER_IN, ft_to_m, m_to_ft
 
 NGS_GEOID_URL = "https://geodesy.noaa.gov/api/geoid/ght"
 
-# The offset unknown for a session's static shots, when it also has moving
-# points. See `session_offsets`.
-STATIC_SUFFIX = " (static shots)"
 
 
 # --- geoid ----------------------------------------------------------------
@@ -335,7 +331,7 @@ class SessionOffsets:
             lines.append(f"  {name:24s} {off * 100:+8.2f} cm "
                          f"(+/- {se * 100:.2f}){flag}")
         for (a, b), n in sorted(self.pair_counts.items()):
-            lines.append(f"  {a} <-> {b}: {n} overlapping pairs")
+            lines.append(f"  {a} <-> {b}: {n} overlap observations")
         if self.unresolved:
             lines.append(
                 "  Unresolved sessions share no overlapping ground with the "
@@ -345,25 +341,33 @@ class SessionOffsets:
         return "\n".join(lines)
 
 
-def session_offsets(ps: PointSet, *, radius_m: float = 0.30,
+def session_offsets(ps: PointSet, *, radius_m: float = 0.5,
                     min_seconds: float = 60.0,
                     reference: str | None = None,
                     column: str = Z,
                     static_radius_m: float = 1.0) -> SessionOffsets:
-    """Solve one constant vertical offset per session from crossover overlap.
+    """Solve one constant vertical offset per session from overlap.
 
-    Observation, for a pair of nearby points from different sessions:
+    Observation, for a piece of ground two sessions both covered:
 
-        offset(session_j) - offset(session_i) = z_j - z_i
+        offset(session_b) - offset(session_a) = z_b - z_a
 
     because the ground did not move between visits. Only differences are
     determined, so one session is held at zero; the others are relative to it.
 
-    The pairs are `merge.overlap_pairs`: moving points within `radius_m`, a
-    static shot within `static_radius_m` - the same pairs the merge report
-    counts, so a session it calls linked is one this can tie.
+    The observations are `merge.overlap_observations` - one per `radius_m`
+    cell two sessions cover, and one per static shot and session within
+    `static_radius_m` - the same ones the merge report counts, so a session
+    it calls linked is one this can tie. Every observation has the same
+    weight, so the standard errors come from the scatter between cells.
+
+    Static shots in a session that also logged moving points are on a
+    different mount - a pole planted on the spot, not the mower - so they get
+    an offset of their own (the walked-versus-planted constant). It is a
+    nuisance parameter: not reported in `offsets`, and connectivity is by
+    real session name.
     """
-    from .merge import overlap_pairs, static_rows
+    from .merge import overlap_observations
 
     if SESSION not in ps.df.columns:
         raise ValueError("point set carries no session labels")
@@ -384,46 +388,27 @@ def session_offsets(ps: PointSet, *, radius_m: float = 0.30,
     names = sorted(set(sessions))
     reference = reference or names[0]
 
-    # Static shots in a session that also logged moving points are on a
-    # different mount - a pole planted on the spot, not the mower - so they
-    # get an offset of their own (the walked-versus-planted constant). Left
-    # in the moving points' session, every pair between them and another
-    # outing carried that constant into the other outing's offset. They
-    # still link their session for connectivity, which is by real name.
-    static = static_rows(d)
-    unknown = sessions.astype(object)
-    split = static & np.isin(sessions, list(set(sessions[~static])))
-    unknown[split] = [f"{s}{STATIC_SUFFIX}" for s in sessions[split]]
-
-    pairs = overlap_pairs(ps, radius_m=radius_m,
-                          static_radius_m=static_radius_m,
-                          min_seconds=min_seconds)
-    z = d[column].to_numpy()
+    obs = overlap_observations(ps, cell_m=radius_m,
+                               static_radius_m=static_radius_m,
+                               min_seconds=min_seconds, column=column)
 
     ls = LeastSquares()
-    counts: dict[tuple[str, str], int] = {}
-    for i, j in pairs:
-        ui, uj = unknown[i], unknown[j]
-        if ui == uj:
-            continue                      # same session says nothing about bias
-        ls.add({f"OFF:{uj}": 1.0, f"OFF:{ui}": -1.0}, z[j] - z[i],
-               label=f"{ui}~{uj}")
-        si, sj = sessions[i], sessions[j]
-        if si != sj:
-            key = (si, sj) if si < sj else (sj, si)
-            counts[key] = counts.get(key, 0) + 1
+    for a, b, dz in zip(obs.a, obs.b, obs.dz):
+        ls.add({f"OFF:{b}": 1.0, f"OFF:{a}": -1.0}, dz, label=f"{a}~{b}")
+    counts = obs.counts()
 
     # Every session needs a column even if it never overlapped anything, so
     # that its absence is reported rather than silently dropped.
-    for nm in sorted(set(unknown)):
+    for nm in sorted(set(names) | set(obs.a) | set(obs.b)):
         ls.anchor(f"OFF:{nm}")
     ls.constrain(f"OFF:{reference}", 0.0)
 
     adj = ls.solve()
 
-    # Connectivity comes from real overlapping pairs only. A session reachable
-    # from the reference through a chain of overlaps has a determined offset;
-    # one that is not, does not, however tightly the solver reports it.
+    # Connectivity comes from real overlap observations only. A session
+    # reachable from the reference through a chain of overlaps has a
+    # determined offset; one that is not, does not, however tightly the
+    # solver reports it.
     linked = {reference}
     changed = True
     while changed:
@@ -625,7 +610,7 @@ def solve_vertical(tracks: PointSet, spots: PointSet | None = None, *,
                    mode: str = "local",
                    benchmark_id: int | str = 1,
                    benchmark_elev_ft: float = 100.0,
-                   radius_m: float = 0.30,
+                   radius_m: float = 0.5,
                    static_radius_m: float = 1.0,
                    geoid: GeoidSeparation | None = None,
                    tied_to_model: bool = False,

@@ -28,23 +28,24 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
-from . import qc
 from .model.pointset import (E, FIX, FIX_FLOAT, FIX_RTK, KIND, N, ROD_IN,
                              SESSION, SOURCE, TIME, Z, PointSet, concat)
 
-# Overlap is judged on the same geometry the offset solver uses, so a session
-# this module calls linked is one the solver can actually tie: two moving
-# points within 30 cm, or a static shot within 1 m of anything. A static shot
-# was taken standing still on the spot, so its position is good to a few
-# centimetres however far it is from the nearest pass, and the ground within
-# a metre of it is the same ground on a lawn.
-RADIUS_M = 0.30
+# Overlap is judged on exactly the observations the offset solver uses
+# (`overlap_observations`), so a session this module calls linked is one the
+# solver can actually tie: a 0.5 m cell two sessions both cover, or a static
+# shot within 1 m of another session's points.
+CELL_M = 0.5
 STATIC_RADIUS_M = 1.0
 MIN_SECONDS = 60.0
 
-# Below this, an offset is being fitted to a handful of pairs that could all be
-# from one patch of ground and one pass. It is not nothing, but it should not
-# be presented as a solved datum.
+# The offset unknown for a session's static shots, when it also has moving
+# points: they are on a pole, not the mower. See `overlap_observations`.
+STATIC_SUFFIX = " (static shots)"
+
+# Below this, an offset is being fitted to a handful of cells that could all
+# be from one patch of ground and one pass. It is not nothing, but it should
+# not be presented as a solved datum.
 THIN_OVERLAP = 25
 
 
@@ -123,11 +124,11 @@ class MergeReport:
             lines += [f"  {s.describe()}" for s in self.sessions]
 
         if len(self.sessions) > 1:
-            within = f"within {RADIUS_M * 100:.0f} cm"
+            what = f"{CELL_M:g} m cells both sessions cover"
             if self.static_shots:
-                within += (f", or {STATIC_RADIUS_M:g} m of one of "
-                           f"{self.static_shots:,} static shots")
-            lines += ["", f"Overlap between sessions (crossover pairs {within}):"]
+                what += (f", and {self.static_shots:,} static shots compared "
+                         f"within {STATIC_RADIUS_M:g} m")
+            lines += ["", f"Overlap between sessions ({what}):"]
             if self.overlaps:
                 for (a, b), count in sorted(self.overlaps.items(),
                                             key=lambda kv: -kv[1]):
@@ -136,10 +137,10 @@ class MergeReport:
                 lines.append("  none")
 
         for a, b, count in self.thin:
-            lines += ["", f"WARNING: {a} and {b} share only {count} crossover "
-                          "pairs. That is enough to compute an offset and not "
-                          "enough to trust it — it may all come from one patch "
-                          "of ground on one pass."]
+            lines += ["", f"WARNING: {a} and {b} share only {count} overlap "
+                          "observations. That is enough to compute an offset "
+                          "and not enough to trust it — it may all come from "
+                          "one patch of ground on one pass."]
 
         if self.unlinked:
             lines += ["", "CANNOT BE RECONCILED:"]
@@ -265,83 +266,152 @@ def static_rows(df: pd.DataFrame) -> np.ndarray:
     return static
 
 
-def overlap_pairs(ps: PointSet, *, radius_m: float = RADIUS_M,
-                  static_radius_m: float = STATIC_RADIUS_M,
-                  min_seconds: float = MIN_SECONDS) -> np.ndarray:
-    """Row pairs that count as overlap: the one definition of it.
+@dataclass
+class Overlap:
+    """Observations of the height difference between sessions.
 
-    Two moving points pair within `radius_m`; a static shot pairs with any
-    point within `static_radius_m`. Both must be more than `min_seconds`
-    apart. Returns an (n, 2) array of row indices into `ps.df`, each pair
-    once. The merge report counts these and `vertical.session_offsets`
-    solves from them, so the two cannot disagree about which sessions are
-    linked.
+    Each is `offset(b) - offset(a) = dz`, because the ground did not move.
+    `a` and `b` are offset unknowns: a session's name, or that name plus
+    `STATIC_SUFFIX` for the static shots of a session that also logged
+    moving points. `real_a` / `real_b` are the sessions themselves.
+    """
+
+    a: np.ndarray
+    b: np.ndarray
+    dz: np.ndarray
+    real_a: np.ndarray
+    real_b: np.ndarray
+    kind: np.ndarray                   # "cell" or "shot"
+
+    def __len__(self) -> int:
+        return len(self.dz)
+
+    def counts(self) -> dict[tuple[str, str], int]:
+        """Observations between each pair of DIFFERENT sessions."""
+        out: dict[tuple[str, str], int] = {}
+        for ra, rb in zip(self.real_a, self.real_b):
+            if ra != rb:
+                key = (ra, rb) if ra < rb else (rb, ra)
+                out[key] = out.get(key, 0) + 1
+        return out
+
+
+def overlap_observations(ps: PointSet, *, cell_m: float = CELL_M,
+                         static_radius_m: float = STATIC_RADIUS_M,
+                         min_seconds: float = MIN_SECONDS,
+                         column: str = Z) -> Overlap:
+    """The evidence session offsets are solved from: the one definition.
+
+    Moving points are compared by cell. In every `cell_m` cell (anchored at
+    0,0, the site origin's grid) covered by two sessions, each session's
+    median height gives ONE observation for that pair, provided their median
+    times are more than `min_seconds` apart. Raw 10 Hz pairs made a 5-minute
+    stop worth millions of observations of one patch of ground, and a
+    standard error to match; a cell is one piece of ground, counted once.
+
+    A static shot (a rod reading or a `type`) is compared with each other
+    session's median within `static_radius_m`: one observation per shot and
+    session. A shot is taken standing still, so its position is good to a
+    few centimetres, and the ground within a metre of it is the same ground
+    on a lawn.
+
+    Points with no height in `column` take no part: a laser rod shot reaches
+    the datum through the level network instead.
     """
     from scipy.spatial import cKDTree
 
+    empty = np.empty(0, dtype=object)
+    none = Overlap(empty, empty, np.empty(0), empty, empty, empty)
     d = ps.df
+    if SESSION not in d.columns or len(d) < 2:
+        return none
+    if column in d.columns:
+        d = d[d[column].notna()].reset_index(drop=True)
     if len(d) < 2:
-        return np.empty((0, 2), dtype=int)
-    static = static_rows(d)
-    out = []
+        return none
 
-    moving = np.flatnonzero(~static)
-    if len(moving) >= 2:
-        sub = qc.crossover_pairs(ps.select(~static, "moving"), radius_m,
-                                 min_seconds)
-        out.append(moving[sub])
+    real = d[SESSION].astype(str).to_numpy().astype(object)
+    static = static_rows(d)
+    unknown = real.copy()
+    split = static & np.isin(real, list(set(real[~static])))
+    unknown[split] = [f"{r}{STATIC_SUFFIX}" for r in real[split]]
+    to_real = dict(zip(unknown, real))
+
+    e = d[E].to_numpy(dtype=float)
+    n = d[N].to_numpy(dtype=float)
+    z = d[column].to_numpy(dtype=float)
+    timed = TIME in d.columns and bool(min_seconds)
+    t = (d[TIME].to_numpy().astype("datetime64[ns]").astype(np.int64) / 1e9
+         if timed else np.zeros(len(d)))
+    parts = []
+
+    moving = ~static
+    if moving.sum() >= 2:
+        cells = pd.DataFrame({
+            "ix": np.floor(e[moving] / cell_m).astype(np.int64),
+            "iy": np.floor(n[moving] / cell_m).astype(np.int64),
+            "u": unknown[moving], "z": z[moving], "t": t[moving]})
+        med = (cells.groupby(["ix", "iy", "u"], sort=False)
+               .agg(z=("z", "median"), t=("t", "median")).reset_index())
+        shared = med[med.duplicated(["ix", "iy"], keep=False)]
+        both = shared.merge(shared, on=["ix", "iy"], suffixes=("_a", "_b"))
+        both = both[both["u_a"] < both["u_b"]]
+        if timed:
+            both = both[(both["t_a"] - both["t_b"]).abs() > min_seconds]
+        parts.append((both["u_a"].to_numpy(dtype=object),
+                      both["u_b"].to_numpy(dtype=object),
+                      (both["z_b"] - both["z_a"]).to_numpy(dtype=float),
+                      "cell"))
 
     shots = np.flatnonzero(static)
     if len(shots) and static_radius_m:
-        xy = d[[E, N]].to_numpy(dtype=float)
+        xy = np.column_stack([e, n])
         near = cKDTree(xy).query_ball_point(xy[shots], static_radius_m)
-        i = np.repeat(shots, [len(n) for n in near])
-        j = (np.concatenate([np.asarray(n, dtype=int) for n in near])
-             if len(i) else np.empty(0, dtype=int))
-        # A pair of two static shots is found from both ends; keep one.
-        keep = (i != j) & ~(static[j] & (j < i))
-        i, j = i[keep], j[keep]
-        if TIME in d.columns and min_seconds:
-            t = d[TIME].to_numpy().astype("datetime64[ns]").astype(np.int64) / 1e9
-            far = np.abs(t[i] - t[j]) > min_seconds
-            i, j = i[far], j[far]
-        out.append(np.column_stack([i, j]))
+        ua, ub, dz = [], [], []
+        for i, found in zip(shots, near):
+            found = np.asarray(found, dtype=int)
+            found = found[unknown[found] != unknown[i]]
+            if timed:
+                found = found[np.abs(t[found] - t[i]) > min_seconds]
+            if not len(found):
+                continue
+            for u, zs in pd.Series(z[found]).groupby(unknown[found]):
+                ua.append(unknown[i])
+                ub.append(u)
+                dz.append(float(zs.median()) - z[i])
+        parts.append((np.asarray(ua, dtype=object), np.asarray(ub, dtype=object),
+                      np.asarray(dz, dtype=float), "shot"))
 
-    out = [p for p in out if len(p)]
-    return np.vstack(out).astype(int) if out else np.empty((0, 2), dtype=int)
+    parts = [q for q in parts if len(q[2])]
+    if not parts:
+        return none
+    a = np.concatenate([q[0] for q in parts])
+    b = np.concatenate([q[1] for q in parts])
+    return Overlap(
+        a=a, b=b, dz=np.concatenate([q[2] for q in parts]),
+        real_a=np.array([to_real[x] for x in a], dtype=object),
+        real_b=np.array([to_real[x] for x in b], dtype=object),
+        kind=np.concatenate([np.full(len(q[2]), q[3], dtype=object)
+                             for q in parts]))
 
 
-def session_overlap(ps: PointSet, *, radius_m: float = RADIUS_M,
+def session_overlap(ps: PointSet, *, cell_m: float = CELL_M,
                     static_radius_m: float = STATIC_RADIUS_M,
                     min_seconds: float = MIN_SECONDS,
                     column: str = Z) -> dict[tuple[str, str], int]:
-    """Count overlap pairs between each pair of DIFFERENT sessions.
+    """Count overlap observations between each pair of DIFFERENT sessions.
 
     This is exactly the evidence `vertical.session_offsets` fits its offsets
-    to (`overlap_pairs`), counted rather than solved. Points with no height in
-    `column` are dropped first, because a laser rod shot reaches the datum
-    through the level network and can never contribute an overlap here -
-    leaving them in would make a session look better connected than it is.
+    to (`overlap_observations`), counted rather than solved. Points with no
+    height in `column` are left out, because a laser rod shot reaches the
+    datum through the level network and can never contribute an overlap
+    here - leaving them in would make a session look better connected than
+    it is.
     """
-    if SESSION not in ps.df.columns or len(ps) < 2:
-        return {}
-    if column in ps.df.columns:
-        ps = ps.select(ps.df[column].notna().to_numpy(), f"has {column}")
-    if len(ps) < 2:
-        return {}
-
-    sessions = ps.df[SESSION].astype(str).to_numpy()
-    pairs = overlap_pairs(ps, radius_m=radius_m,
-                          static_radius_m=static_radius_m,
-                          min_seconds=min_seconds)
-    counts: dict[tuple[str, str], int] = {}
-    for i, j in pairs:
-        a, b = sessions[i], sessions[j]
-        if a == b:
-            continue
-        key = (a, b) if a < b else (b, a)
-        counts[key] = counts.get(key, 0) + 1
-    return counts
+    return overlap_observations(ps, cell_m=cell_m,
+                                static_radius_m=static_radius_m,
+                                min_seconds=min_seconds,
+                                column=column).counts()
 
 
 def unlinked_sessions(names, overlaps) -> list[str]:
