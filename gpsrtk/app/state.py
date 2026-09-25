@@ -43,7 +43,7 @@ from ..merge import MergeReport, crs_disagreement_m, diagnose, \
     instrument_height_notes, merge_layers, reproject
 from ..model.pointset import PointSet, E, N, SESSION
 from ..georef import ImageryOffset, solve_imagery_offset
-from ..plan import Plan
+from ..plan import FillReport, Plan
 from ..project import BasemapState, Project
 from ..site import Site, default_site
 from ..surface import Extent, Surface, build_surface
@@ -163,6 +163,9 @@ class AppState:
         # edit that does not touch them does not trigger a re-solve.
         self._solved_plan: str | None = None
 
+        # What the last plan open filled in from SW Maps records.
+        self.last_fill = FillReport()
+
         # Crossover pairs of the point sets the readouts describe, held with
         # the set itself so that a new set can never be mistaken for an old
         # one that happened to live at the same address.
@@ -258,6 +261,10 @@ class AppState:
 
         for k in self.layers:
             self.visible.setdefault(k, True)
+
+        filled = self.fill_plan_from_records()
+        if filled.filled or filled.conflicts:
+            report.notes.append(filled.describe())
 
         # Prefer continuous logging as the working layer; it is what surfaces
         # are built from. Fall back to whichever layer has the most points.
@@ -356,11 +363,89 @@ class AppState:
                 sets.append(ps)
         planned = self.plan_pointset()
         if planned is not None:
+            planned = self._without_copied_readings(planned, sets)
+        if planned is not None and len(planned):
             sets.append(planned)
 
         if not sets:
             return None
         return sets[0] if len(sets) == 1 else concat(sets, layer="rod shots")
+
+    @staticmethod
+    def _without_copied_readings(planned: PointSet, records: list[PointSet]
+                                 ) -> PointSet:
+        """Plan rows that are not copies of a SW Maps reading.
+
+        A reading filled into the plan from a SW Maps record (same station,
+        same setup, same rod) is one observation, not two. Counting it twice
+        would add a degree of freedom that checks nothing.
+        """
+        from ..model.pointset import ROD_IN, concat
+        from ..plan import FILL_ROD_TOLERANCE_IN
+        from ..vertical import resolve_setups, stations
+
+        if not records:
+            return planned
+        both = records[0] if len(records) == 1 else concat(records)
+        shot = both.df[ROD_IN].notna().to_numpy()
+        seen: dict[tuple, list[float]] = {}
+        for st, su, rod in zip(stations(both)[shot], resolve_setups(both)[shot],
+                               both.df[ROD_IN][shot]):
+            seen.setdefault((st, su), []).append(float(rod))
+        mine = zip(stations(planned), resolve_setups(planned), planned.df[ROD_IN])
+        keep = [not any(abs(float(rod) - r) <= FILL_ROD_TOLERANCE_IN
+                        for r in seen.get((st, su), ()))
+                for st, su, rod in mine]
+        return planned if all(keep) else planned.select(keep, "not copied")
+
+    def plan_records(self) -> list[dict]:
+        """SW Maps records named after a plan shot ("P12"), earliest first."""
+        import pandas as pd
+
+        from ..model.pointset import FIX, ROD_IN, TIME
+        from ..vertical import PLAN_STATION, resolve_setups, stations
+
+        rows = []
+        for name, ps in self.layers.items():
+            if name in (self.active_layer, self.PLAN_LAYER):
+                continue
+            keys = stations(ps)
+            named = keys.map(lambda k: isinstance(k, str)
+                             and PLAN_STATION.match(k) is not None)
+            if not named.any():
+                continue
+            d = ps.df
+            setups = resolve_setups(ps)
+            for i in d.index[named.to_numpy()]:
+                pid = d["point_id"].at[i] if "point_id" in d.columns else None
+                rows.append({
+                    "number": int(keys.at[i][1:]),
+                    "e": float(d[E].at[i]), "n": float(d[N].at[i]),
+                    "fix": (int(d[FIX].at[i]) if FIX in d.columns
+                            and d[FIX].notna().at[i] else None),
+                    "rod_in": (float(d[ROD_IN].at[i]) if ROD_IN in d.columns
+                               and d[ROD_IN].notna().at[i] else None),
+                    "setup": (setups.at[i] if ROD_IN in d.columns
+                              and d[ROD_IN].notna().at[i] else ""),
+                    "label": (f"SW Maps {name} record {pid}" if pd.notna(pid)
+                              else f"SW Maps {name} record"),
+                    "time": (d[TIME].at[i] if TIME in d.columns
+                             and pd.notna(d[TIME].at[i]) else pd.Timestamp.max),
+                })
+        rows.sort(key=lambda r: r["time"])
+        return rows
+
+    def fill_plan_from_records(self):
+        """Fill plan shots from SW Maps records named after them.
+
+        Runs after an export is opened or merged and after a plan is opened.
+        Only empty cells are filled; disagreements are reported, never
+        written. Returns the `FillReport`.
+        """
+        report = self.plan.fill_from_records(self.plan_records())
+        if report.changed:
+            self.refresh_plan_layer()
+        return report
 
     def plan_pointset(self) -> PointSet | None:
         """Plan observations that have a reading, as a PointSet."""
@@ -886,6 +971,7 @@ class AppState:
                 f"That plan was made in EPSG:{plan.epsg} but this site is "
                 f"EPSG:{self.site.epsg}. The positions would be wrong.")
         self.plan = plan
+        self.last_fill = self.fill_plan_from_records()
         self.plan_changed()
         self.statusMessage.emit(f"Opened {Path(path).name}")
         return plan

@@ -702,3 +702,98 @@ def test_the_hint_goes_quiet_on_a_multi_selection():
     to, and applying it to whichever was first would be a silent wrong edit."""
     assert "2 points selected" in PE.selection_hint(2)
     assert PE.selection_hint(0) == "Select a row."
+
+
+# --- filling the plan from SW Maps records named "P12" ----------------------------
+
+def _named_export(tmp_path, names, *, fix=None, name="Named"):
+    """The synthetic spots, with some records named after plan shots."""
+    import zipfile
+
+    from synthetic import spot_rows, track_points
+
+    spots = spot_rows()
+    for row, label in names.items():
+        spots.loc[row, "Feature Name"] = label
+    if fix:
+        for row, value in fix.items():
+            spots.loc[row, "Fix ID"] = value
+    path = tmp_path / f"{name}.zip"
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr(f"{name}_TRACK_POINTS.csv", track_points().to_csv(index=False))
+        z.writestr(f"{name}_spots.csv", spots.to_csv(index=False))
+    return path, spots
+
+
+@pytest.fixture
+def planned(tmp_path):
+    from gpsrtk.app import AppState
+    from gpsrtk.site import example_site
+
+    st = AppState(site=example_site(), cache_dir=tmp_path / "cache")
+    for k in range(3):
+        st.plan.add_point(449705.0 + 10 * k, 4604555.2)      # P1, P2, P3
+    return st
+
+
+def test_a_record_named_after_a_plan_shot_fills_it(planned, tmp_path):
+    """Every GNSS position used to be retyped from the sheet."""
+    path, spots = _named_export(tmp_path, {0: "P1", 1: "p2"})
+    report = planned.load(path)
+    p1, p2 = planned.plan.by_number(1), planned.plan.by_number(2)
+    assert (p1.observed_e, p1.observed_n) == pytest.approx(
+        (spots.loc[0, "X"], spots.loc[0, "Y"]))
+    assert p1.fix == 4 and p1.method == "rtk"
+    assert p1.rod_in == pytest.approx(spots.loc[0, "height number"])
+    assert p1.setup == "0"
+    assert p2.rod_in == pytest.approx(spots.loc[1, "height number"])
+    assert "P1: RTK fixed position from SW Maps spots record 1" in "\n".join(report.notes)
+    assert planned.plan.by_number(3).rod_in is None
+
+
+def test_a_copied_reading_is_one_observation(planned, tmp_path):
+    """The plan row filled from a record is the same reading, not a second
+    one; counting it twice would add a check that checks nothing."""
+    from gpsrtk import vertical as V
+
+    path, spots = _named_export(tmp_path, {0: "P1", 1: "P2"})
+    planned.load(path)
+    net = V.level_network(planned.spots)
+    assert net.adjustment.n_obs == len(spots)
+    assert (planned.spots.df["source"] == "plan").sum() == 0
+    # A reading typed on the plan that is NOT a copy still counts.
+    planned.plan.by_number(3).rod_in = 40.0
+    planned.plan.by_number(3).setup = "0"
+    planned.plan_changed()
+    assert V.level_network(planned.spots).adjustment.n_obs == len(spots) + 1
+
+
+def test_a_disagreement_is_reported_and_never_written(planned, tmp_path):
+    p1 = planned.plan.by_number(1)
+    p1.observed_e, p1.observed_n, p1.fix, p1.method = 449700.0, 4604550.0, 4, "rtk"
+    p1.rod_in, p1.setup = 10.0, "0"
+    path, _ = _named_export(tmp_path, {0: "P1"})
+    notes = "\n".join(planned.load(path).notes)
+    assert "P1: SW Maps spots record 1 is" in notes and "from the measured position" in notes
+    assert "reads" in notes and "the plan has 10 in" in notes
+    assert (p1.observed_e, p1.observed_n, p1.rod_in) == (449700.0, 4604550.0, 10.0)
+
+
+def test_a_float_record_gives_no_position(planned, tmp_path):
+    """A float fix is worse than the planned click - the sheet's own rule."""
+    path, spots = _named_export(tmp_path, {0: "P1"}, fix={0: 5})
+    planned.load(path)
+    p1 = planned.plan.by_number(1)
+    assert p1.observed_e is None and p1.method == "planned"
+    assert p1.rod_in == pytest.approx(spots.loc[0, "height number"])
+
+
+def test_opening_a_plan_fills_it_too(planned, tmp_path):
+    path, _ = _named_export(tmp_path, {2: "P3"})
+    saved = planned.save_plan(tmp_path / "shots.yardplan")
+    planned.load(path)
+    planned.plan.by_number(3).rod_in = None
+    planned.plan.by_number(3).observed_e = planned.plan.by_number(3).observed_n = None
+    planned.open_plan(saved)
+    assert planned.plan.by_number(3).observed_e is not None
+    assert planned.last_fill.filled

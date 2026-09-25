@@ -104,6 +104,7 @@ These were set by the owner and apply to every item.
 | After O2 | 370 passed, 51 skipped, 40 deselected | 35 passed |
 | After O3, C3 | 376 passed, 51 skipped, 40 deselected | 35 passed |
 | After A6 | 381 passed, 51 skipped, 40 deselected | 35 passed |
+| After A2 | 386 passed, 51 skipped, 40 deselected | 35 passed |
 
 Of the 55 skips, 50 need real data. The other 5 are network tests that the
 sandbox proxy refused.
@@ -172,8 +173,8 @@ These answers change the designs in section 5.
 | 13 | O2 | Compute crossovers and slope once | code health | ✅ `1a20e3b` |
 | 14 | O3 | Filter-chain cache keyed by a token | code health | ✅ `e03aedc` |
 | 15 | C3 | Heights labelled by vertical model | processing | ✅ `6a8f32f` |
-| 16 | A6 | Source fingerprints | code health | ✅ |
-| 17 | A2 | Fill plan shots from SW Maps records by station | workflow | todo |
+| 16 | A6 | Source fingerprints | code health | ✅ `af97773` |
+| 17 | A2 | Fill plan shots from SW Maps records by station | workflow | ✅ |
 | 18 | A4 | Per-setup level closure and laser check | workflow | todo |
 | 19 | A3 | Control marks and start/end check shots | workflow | todo (**format v3**) |
 | 20 | A5 | Tie transects | workflow | todo |
@@ -696,7 +697,26 @@ follow it in SW Maps:
   reopen.
 - **Breaking?:** an additive key.
 
-**A2 — Fill plan shots from SW Maps records by station**
+**A2 — Fill plan shots from SW Maps records by station** ✅
+- **Done:** `Plan.fill_from_records(records) -> FillReport` (in `plan.py`,
+  with `FILL_POSITION_TOLERANCE_M` 0.10 and `FILL_ROD_TOLERANCE_IN` 1e-4).
+  Position and fix come only from fix-4 records into shots with no measured
+  position (method becomes "rtk"); rod and setup only into empty cells (a
+  setup is also filled when the plan's reading already equals the
+  record's, so the two dedupe). A rod disagreement is reported only on the
+  same setup (or where either has none): a different setup is simply
+  another observation. `AppState.plan_records()` gathers records whose
+  station is `P<n>` from every layer except the working and plan layers,
+  earliest first, with setups resolved as the network does;
+  `AppState.fill_plan_from_records()` runs in `load` (notes go in
+  `MergeReport.notes`, so the open and merge notices show them) and in
+  `open_plan` (`last_fill`; `/api/plan/open` shows a notice, a warning when
+  there are conflicts). `AppState.spots` drops plan rows that copy a SW Maps
+  reading (station, resolved setup, rod within 1e-4) via
+  `_without_copied_readings`. Tests: `test_plan_edit.py::test_a_record_named_after_a_plan_shot_fills_it`,
+  `::test_a_copied_reading_is_one_observation`,
+  `::test_a_disagreement_is_reported_and_never_written`,
+  `::test_a_float_record_gives_no_position`, `::test_opening_a_plan_fills_it_too`.
 - **What:** after open, merge or plan open, a SW Maps record whose station is
   `P12` fills plan shot 12:
   - **Position and fix:** only if the record's fix is 4 (fixed) and the plan

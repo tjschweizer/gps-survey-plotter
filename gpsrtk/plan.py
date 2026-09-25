@@ -81,6 +81,11 @@ CONTROL_PURPOSES = frozenset(PURPOSE_GROUPS["control"])
 
 DEFAULT_LINE_PURPOSE = "breakline"
 
+# A SW Maps record named after a plan shot fills it, but never overwrites it.
+# Beyond these it disagrees, and the disagreement is reported instead.
+FILL_POSITION_TOLERANCE_M = 0.10
+FILL_ROD_TOLERANCE_IN = 1e-4
+
 
 def purpose_group(purpose: str) -> str:
     for name, members in PURPOSE_GROUPS.items():
@@ -162,6 +167,31 @@ class PlannedPoint:
 
     def sigma_m(self) -> float:
         return SIGMA_M.get(self.method, SIGMA_M["planned"])
+
+
+@dataclass
+class FillReport:
+    """What SW Maps records named "P12" filled in, and where they disagreed."""
+
+    filled: list[str] = field(default_factory=list)
+    conflicts: list[str] = field(default_factory=list)
+
+    @property
+    def changed(self) -> bool:
+        return bool(self.filled)
+
+    def describe(self) -> str:
+        lines = []
+        if self.filled:
+            lines.append("Filled from SW Maps records named after plan shots:")
+            lines += [f"  {f}" for f in self.filled]
+        if self.conflicts:
+            if lines:
+                lines.append("")
+            lines.append("SW Maps records that disagree with the plan (the "
+                         "plan was kept; check which is right):")
+            lines += [f"  {c}" for c in self.conflicts]
+        return "\n".join(lines)
 
 
 @dataclass
@@ -359,6 +389,67 @@ class Plan:
         left = np.array([-along[1], along[0]])
         pos = a + along * point.station_m + left * point.offset_m
         return float(pos[0]), float(pos[1])
+
+    # --- filling from the field app ----------------------------------------
+
+    def fill_from_records(self, records) -> FillReport:
+        """Fill plan shots from SW Maps records recorded as "P12".
+
+        `records` are dicts with `number`, `e`, `n`, `fix`, `rod_in`, `setup`
+        and a `label` to report them by, earliest first. A record:
+
+          * gives its position and fix only if it is RTK FIXED and the shot
+            has no measured position yet - a float fix is worse than the
+            planned click, which is the field sheet's own rule;
+          * gives its rod reading, and its setup, only to an empty cell.
+
+        Nothing is ever overwritten. A fixed position more than 10 cm from
+        the measured one, or a different reading on the same setup, is
+        reported instead: one of them is wrong, and only a person can say
+        which. Until now every position had to be retyped from the sheet.
+        """
+        report = FillReport()
+        for r in records:
+            p = self.by_number(int(r["number"]))
+            if p is None:
+                continue
+            name, label = f"P{p.number}", r.get("label", "a SW Maps record")
+            e, n = r.get("e"), r.get("n")
+            fixed = (r.get("fix") == 4 and e is not None and n is not None
+                     and math.isfinite(e) and math.isfinite(n))
+            if fixed:
+                if p.observed_e is None or p.observed_n is None:
+                    p.observed_e, p.observed_n = float(e), float(n)
+                    p.fix, p.method = 4, "rtk"
+                    report.filled.append(f"{name}: RTK fixed position from {label}")
+                else:
+                    away = math.hypot(e - p.observed_e, n - p.observed_n)
+                    if away > FILL_POSITION_TOLERANCE_M:
+                        report.conflicts.append(
+                            f"{name}: {label} is {away:.2f} m from the "
+                            "measured position")
+
+            rod = r.get("rod_in")
+            if rod is None or not math.isfinite(rod):
+                continue
+            setup = str(r.get("setup") or "")
+            if p.rod_in is None:
+                p.rod_in = float(rod)
+                if not p.setup and setup:
+                    p.setup = setup
+                report.filled.append(
+                    f"{name}: rod {rod:g} in"
+                    + (f", setup {setup}" if setup else "") + f" from {label}")
+            elif abs(p.rod_in - rod) <= FILL_ROD_TOLERANCE_IN:
+                if not p.setup and setup:
+                    p.setup = setup
+                    report.filled.append(f"{name}: setup {setup} from {label}")
+            elif not p.setup or not setup or p.setup == setup:
+                report.conflicts.append(
+                    f"{name}: {label} reads {rod:g} in"
+                    + (f" on setup {setup}" if setup else "")
+                    + f"; the plan has {p.rod_in:g} in")
+        return report
 
     # --- handing off to the rest of the pipeline -------------------------
 

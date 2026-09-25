@@ -974,6 +974,11 @@ def create_app(state: AppState | None = None, *, vector_providers=None,
             except Exception as exc:                        # noqa: BLE001
                 raise UserError("Could not open plan", str(exc)) from exc
             srv.remember_dir(path)
+            fill = st.last_fill
+            if fill.filled or fill.conflicts:
+                return srv.reply(notice(
+                    "Plan opened", fill.describe(),
+                    "warning" if fill.conflicts else "info", monospace=True))
             return srv.reply()
 
     @app.post("/api/plan/save")
