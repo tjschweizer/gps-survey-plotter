@@ -247,13 +247,13 @@ class AppState:
         self.layersChanged.emit()
         self.recompute()
 
-        source = self.source
-        if source is not None:
-            diagnosis = diagnose(source)
+        if self.source is not None:
+            diagnosis = self.session_report()
             report.sessions = diagnosis.sessions
             report.overlaps = diagnosis.overlaps
             report.unlinked = diagnosis.unlinked
             report.thin = diagnosis.thin
+            report.static_shots = diagnosis.static_shots
         return report
 
     def add_export(self, path: str | Path) -> MergeReport:
@@ -279,9 +279,30 @@ class AppState:
         return out, reprojected
 
     def session_report(self) -> MergeReport:
-        """Sessions and overlap for the data currently loaded."""
+        """Sessions and overlap for the data currently loaded.
+
+        Judged on the set the offset solver sees - the filtered working
+        layer plus the terrain rod shots - so the report cannot call a
+        session unrecoverable that the solve then ties, or the reverse.
+        Sessions are still described from what was logged.
+        """
+        from ..filters import KindSelect
+        from ..model.pointset import Z, concat
+
         source = self.source
-        return diagnose(source) if source is not None else MergeReport()
+        if source is None:
+            return MergeReport()
+        basis = self.filtered if self.filtered is not None else source
+        spots = self.spots
+        lawn = None
+        if spots is not None and Z in spots.df.columns:
+            # Only shots with a GNSS height: a plan reading has none, and
+            # would otherwise be listed as a session that overlaps nothing.
+            lawn = KindSelect(names=["lawn"]).apply(
+                spots.select(spots.df[Z].notna().to_numpy(), "has z"))
+        if lawn is None or not len(lawn):
+            return diagnose(source, overlap=basis)
+        return diagnose(concat([source, lawn]), overlap=concat([basis, lawn]))
 
     # --- pipeline --------------------------------------------------------
 

@@ -99,6 +99,7 @@ These were set by the owner and apply to every item.
 | After C1 | 337 passed, 51 skipped, 40 deselected | — |
 | After C2 | 354 passed, 51 skipped, 40 deselected | 35 passed |
 | After C25 | 363 passed, 51 skipped, 40 deselected | 35 passed |
+| After C6 | 365 passed, 51 skipped, 40 deselected | 35 passed |
 
 Of the 55 skips, 50 need real data. The other 5 are network tests that the
 sandbox proxy refused.
@@ -161,8 +162,8 @@ These answers change the designs in section 5.
 | 7 | C7 | Rod entry guard: feet, inches and fractions | workflow | ✅ `2fd6e47` |
 | 8 | C1 | Every rod shot joins the level network | processing | ✅ `0cc6dc4` |
 | 9 | C2 | Station identities: plan shots vs SW Maps records | processing | ✅ `37b38bb` (**meaning changed**) |
-| 10 | C25 | Split sessions where the data proves a mount change | processing | ✅ (**session names change**) |
-| 11 | C6 | One overlap definition for the merge report and the solve | processing | todo |
+| 10 | C25 | Split sessions where the data proves a mount change | processing | ✅ `0817709` (**session names change**) |
+| 11 | C6 | One overlap definition for the merge report and the solve | processing | ✅ |
 | 12 | O1 | Session offsets from cell differences | processing | todo |
 | 13 | O2 | Compute crossovers and slope once | code health | todo |
 | 14 | O3 | Filter-chain cache keyed by a token | code health | todo |
@@ -475,7 +476,32 @@ Approved. Real-data tests that count sessions (for example
 `test_merge.py::test_the_two_real_formats_merge`, which expects 3) may need
 updating after a local run. Report that; don't guess.
 
-**C6 — One overlap definition for the merge report and the solve**
+**C6 — One overlap definition for the merge report and the solve** ✅
+- **Done:** `merge.overlap_pairs` is the one definition (moving points within
+  `RADIUS_M` 0.30 m; a static shot, `merge.static_rows` = rod reading or
+  `type`, within `STATIC_RADIUS_M` 1.0 m; > 60 s apart; each pair once).
+  `merge.session_overlap` counts it and `vertical.session_offsets` solves
+  from it; `solve_vertical` now defaults to `radius_m=0.30,
+  static_radius_m=1.0` (it used 1.0 m for everything). `MergeReport` gained
+  `static_shots` and its heading says "within 30 cm, or 1 m of one of N
+  static shots". `AppState.session_report` (used by `load` too) describes
+  sessions from the logged layer plus terrain shots with a GNSS height, and
+  judges overlap on the filtered layer plus those shots, via
+  `diagnose(ps, overlap=...)`.
+- **Beyond the item, needed for its own check:** with static shots now
+  pairing at 1 m and tracks at 30 cm, the synthetic merge solved 3.8 cm
+  instead of 5 cm. The first outing's spots are on a 2 m pole but share the
+  mower session's name, and each spot-to-outing-2 pair carried the ~1 m
+  pole-versus-mower difference (the old 1 m track pairs had diluted it).
+  `session_offsets` now gives a session's static shots their own offset
+  unknown (`"<session> (static shots)"`, `vertical.STATIC_SUFFIX`) when the
+  session also has moving points. It is a nuisance parameter: left out of
+  `offsets`, and connectivity and pair counts stay by real session name.
+  The synthetic merge now solves +5.00 cm.
+- **Tests:** `test_merge.py::test_moving_points_pair_within_30_cm_and_static_shots_within_a_metre`,
+  `::test_the_merge_report_and_the_solve_agree_on_a_spot_outing` (E6: a
+  spot-only outing 50 cm from the passes; the report and the solve agree
+  pair for pair). **Needs a local real-data run.**
 - **What:** `merge.diagnose` / `session_overlap` and `vertical.session_offsets`
   use the same pairing: 0.30 m between tracks, 1.0 m where one end is a static
   shot. Detect static shots as rows with a rod reading or a `type`, or pass

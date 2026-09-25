@@ -351,6 +351,48 @@ def test_merged_sessions_can_be_solved(fresh, synthetic_zip, synthetic_outing2):
     assert second == pytest.approx(0.05, abs=0.01)
 
 
+def test_moving_points_pair_within_30_cm_and_static_shots_within_a_metre():
+    """One overlap definition: 30 cm between passes, 1 m to a static shot."""
+    a = _set("A", n=4)
+    b = _set("B", n=4, day=DAY + pd.Timedelta(days=7))
+    b[P.N] += 0.6                     # 60 cm north of A: too far for passes
+    assert M.session_overlap(_ps(a, b)) == {}
+    b[P.KIND] = "lawn"                # ...but B's points are static shots
+    ps = _ps(a, b)
+    pairs = M.overlap_pairs(ps)
+    assert len({tuple(sorted(p)) for p in pairs.tolist()}) == len(pairs)
+    sessions = ps.df[P.SESSION].to_numpy()
+    between = int((sessions[pairs[:, 0]] != sessions[pairs[:, 1]]).sum())
+    assert between > 0
+    assert M.session_overlap(ps)[("A", "B")] == between
+
+
+def test_the_merge_report_and_the_solve_agree_on_a_spot_outing(fresh, synthetic_zip,
+                                                               tmp_path):
+    """A spot-only outing whose shots sit 50 cm from the nearest pass. The
+    merge report used 30 cm and tracks only, and called it unrecoverable;
+    the solve used 1 m and tied it. They now use one definition."""
+    import zipfile
+
+    from synthetic import spot_rows
+
+    spots = spot_rows(day="2026-09-03 10:00:00", dz=0.07)
+    path = tmp_path / "Spots.zip"
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("Spots_spots.csv", spots.to_csv(index=False))
+
+    fresh.load(synthetic_zip)
+    report = fresh.add_export(path)
+    names = {s.name for s in report.sessions}
+    assert "Spots/2026-09-03" in names
+    assert report.reconcilable and not report.unlinked
+    assert "static shots" in report.describe()
+
+    model = fresh.solve_vertical("ellipsoidal")
+    assert not model.sessions.unresolved
+    assert model.sessions.pair_counts == report.overlaps
+
+
 def test_an_outing_on_other_ground_cannot_be_reconciled(
         fresh, synthetic_zip, synthetic_outing2, synthetic_elsewhere):
     """The one outcome worth a warning at merge time: its offset is not
