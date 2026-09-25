@@ -118,10 +118,20 @@ class Surface:
         return np.flipud(self.z), np.flipud(self.mask)
 
     def world_file(self) -> str:
-        """ESRI world file contents for the north-up image."""
-        return (f"{self.px}\n0.0\n0.0\n{-self.px}\n"
-                f"{self.extent.xmin + self.px / 2}\n"
-                f"{self.extent.ymax - self.px / 2}\n")
+        """ESRI world file contents for the north-up image.
+
+        Each pixel of the image is a grid node, and the nodes are
+        `linspace(min, max, n)`: the first sits ON the extent's edge and the
+        step is width / (n - 1). The world file used to assume width / n
+        and half a pixel in from the edge, which put the raster up to half a
+        pixel out - about 2 cm at the edges of a 1024 px export of a 40 m
+        lot. `px` (and so the mask and the measured fraction) is unchanged.
+        """
+        ny, nx = self.z.shape
+        dx = self.extent.width / (nx - 1)
+        dy = self.extent.height / (ny - 1)
+        return (f"{dx}\n0.0\n0.0\n{-dy}\n"
+                f"{self.extent.xmin}\n{self.extent.ymax}\n")
 
     def describe(self) -> str:
         zm = self.z_masked

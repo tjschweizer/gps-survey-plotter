@@ -123,6 +123,7 @@ These were set by the owner and apply to every item.
 | After C23 | 424 passed, 51 skipped, 55 deselected | 50 passed |
 | After A8 | 425 passed, 51 skipped, 56 deselected | 51 passed |
 | After C29 | 427 passed, 51 skipped, 56 deselected | 51 passed |
+| After C10 | 428 passed, 51 skipped, 56 deselected | — |
 
 Of the 55 skips, 50 need real data. The other 5 are network tests that the
 sandbox proxy refused.
@@ -210,8 +211,8 @@ These answers change the designs in section 5.
 | 32 | C22 | File dialog: date column, sorting, keyboard | UI | ✅ `e361792` |
 | 33 | C23 | Keyboard menus and labelled fields | UI | ✅ `4cfb6fb` |
 | 34 | A8 | Start panel and recent files | UI | ✅ `9c90e3f` |
-| 35 | C29 | Solve report wording | UI | ✅ |
-| 36 | C10 | World file on the grid | processing | todo |
+| 35 | C29 | Solve report wording | UI | ✅ `eae8315` |
+| 36 | C10 | World file on the grid | processing | ✅ |
 | 37 | C24 | Surface smoothing sized in metres | processing | todo |
 | 38 | C26 | .gitignore covers exports | code health | todo |
 | 39 | C27 | Atomic saves | code health | todo |
@@ -1222,7 +1223,15 @@ Evidence for these is in the review screenshots: synthetic export,
 
 ### Surface, hygiene and docs
 
-**C10 — World file on the grid**
+**C10 — World file on the grid** ✅
+- **Done:** `Surface.world_file` writes the node step, width / (n - 1)
+  (and height / (n - 1)), with the first pixel centre at (`xmin`, `ymax`).
+  `Surface.px`, the mask and the measured fraction are untouched. The
+  real-data `test_world_file_points_at_the_north_west_pixel_centre` now
+  checks against `terrain.grid_axes`; new synthetic
+  `test_surface_and_export.py::test_the_world_file_places_every_pixel_on_its_grid_node`
+  (fails before the fix). **Needs a local real-data run** for the updated
+  pinned test.
 - **What:** grid nodes sit at `linspace(min, max, n)`, but the world file
   assumes a pixel size of width/n plus half a pixel (`surface.py:102, 169,
   172`). Write the world file from the node spacing, width/(n−1), with the

@@ -52,16 +52,22 @@ def test_the_3d_grid_pairs_rows_with_northings(surf, site):
 
 
 def test_world_file_points_at_the_north_west_pixel_centre(surf):
+    """Pixel centres are the grid nodes (`terrain.grid_axes`), so the world
+    file's step and origin must be the nodes' own."""
+    from gpsrtk import terrain
+
     lines = surf.world_file().strip().splitlines()
     assert len(lines) == 6
     px_x, rot1, rot2, px_y, x0, y0 = (float(v) for v in lines)
 
-    assert px_x == pytest.approx(surf.px)
-    assert px_y == pytest.approx(-surf.px), "north-up rasters need negative y"
+    gx, gy = terrain.grid_axes(surf)
+    assert px_x == pytest.approx(gx[1] - gx[0])
+    assert px_y == pytest.approx(-(gy[1] - gy[0])), "north-up rasters need negative y"
     assert rot1 == 0.0 and rot2 == 0.0
-    # World files reference the CENTRE of the top-left pixel.
-    assert x0 == pytest.approx(surf.extent.xmin + surf.px / 2)
-    assert y0 == pytest.approx(surf.extent.ymax - surf.px / 2)
+    # World files reference the CENTRE of the top-left pixel: the first
+    # node east and the last node north.
+    assert x0 == pytest.approx(gx[0])
+    assert y0 == pytest.approx(gy[-1])
 
 
 def test_to_image_flips_north_up(surf):
@@ -207,3 +213,20 @@ def test_laser_shots_survive_a_reopen(state, tmp_path):
     assert other.vertical.level is None
     after = other.laser_points()
     assert np.array_equal(before["z"].to_numpy(), after["z"].to_numpy())
+
+
+def test_the_world_file_places_every_pixel_on_its_grid_node(state):
+    """Pixel (row, col) of the north-up image is grid node (n-1-row, col).
+    The world file used to assume width/n and half a pixel in, which put
+    the edges ~2 cm out on a 1024 px export of this lot."""
+    from gpsrtk import terrain
+
+    s = state.export_surface()
+    a, _, _, e, c, f = (float(v) for v in s.world_file().split())
+    gx, gy = terrain.grid_axes(s)
+    ny, nx = s.z.shape
+    for row, col in ((0, 0), (0, nx - 1), (ny - 1, 0), (ny - 1, nx - 1), (ny // 3, nx // 2)):
+        assert c + a * col == pytest.approx(gx[col], abs=1e-6)
+        assert f + e * row == pytest.approx(gy[ny - 1 - row], abs=1e-6)
+    # px, and with it the mask and the measured fraction, are unchanged.
+    assert s.px == pytest.approx(s.extent.width / nx)
