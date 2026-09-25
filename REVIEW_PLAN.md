@@ -10,6 +10,12 @@ continue without the original conversation.
 authoritative. Then work down the **Order of work** table below, one item at
 a time.
 
+**Status, 2026-09-25:** every approved item is done and pushed to `main`
+(section 4); only A9 remains, deferred by the owner (section 7). What is
+left is not code: the **real-data run** listed in section 9, on the machine
+that has the private export, and the owner's call on the **new findings**
+in section 8.
+
 ---
 
 ## 1. Ground rules
@@ -223,7 +229,7 @@ These answers change the designs in section 5.
 | 40 | C28 | Server hardening | code health | ✅ `ef50afd` |
 | 41 | C30 | Hide the do-nothing surface-residual stage | code health | ✅ `8b8804d` |
 | 42 | C31 | Network tests stay off under any `-m` | code health | ✅ `0970ee9` |
-| 43 | C32 | CLAUDE.md: rover is PX4, plus the A9 note | docs | ✅ |
+| 43 | C32 | CLAUDE.md: rover is PX4, plus the A9 note | docs | ✅ `eeec3f4` |
 | — | A9 | Rover mission export | workflow | **deferred** (section 7) |
 
 The order follows dependencies, then puts workflow and UI ahead of anything
@@ -1417,4 +1423,64 @@ The owner wants this later; do not implement it now.
 Things noticed while implementing, recorded rather than fixed, per the
 ground rules.
 
-- (none yet)
+- **Plan numbers can be reused.** `Plan.next_number` is max + 1, so after
+  every point is deleted numbering starts again at 1, although
+  `remove_point` says numbers are never reused. Harmless for tie-transect
+  guides (A5 regenerates them), but a printed sheet in a pocket could meet a
+  new point with an old number if a whole plan were cleared and restarted.
+- **Spot layers share the mower's session name.** Sessions are split per
+  layer (C25), and a day's spots are named `stem/YYYY-MM-DD` like the first
+  track session. The offset solve now gives static shots their own unknown
+  (C6), but the merge report and the Sessions panel still count a day's
+  spots into that session (e.g. "8,034 points, 100 min" where the tracks
+  alone are 8,020 points and 40 min).
+- **`ControlMark.elev_ft` is stored and shown but used for nothing** (A3).
+  An obvious use - holding a mark at its elevation when it is the
+  benchmark, or holding several marks at once - was not approved.
+- **README is stale in two places** outside what the items asked to edit:
+  "About 315 tests run anywhere" (now about 435 non-browser plus 52
+  browser), and the "Projects" section still describes format version 2
+  (A3 made it 3; the new "Control marks and check shots" section says so).
+- **Laser points after a reopen re-solve the level network on every
+  recompute** (`AppState.laser_points`, A1), because the network is not
+  stored. It is small and exact, but it could be cached per model.
+- **`check_shots()` walks rows in Python** and runs on every solve, session
+  report and Sessions-panel refresh. Fine for dozens of shots; worth a look
+  if spot layers grow to thousands.
+- **Map-interaction browser tests depend on the map never resizing** after
+  load (see the C13 fix). Anything that later changes the height of an
+  element above the map at run time will make
+  `test_a_double_click_finishes_a_line` and
+  `test_dragging_a_marker_moves_its_planned_position` flaky again.
+- **R26 is still open by design:** the `SIGMA_M` comment in `plan.py`
+  claims weighting that nothing does (note only in the review).
+
+---
+
+## 9. Real-data run still needed
+
+About 50 tests need the private export and skipped on the desktop
+(`archive/` is absent there too). Run the whole suite on the machine that
+has it, with no `-m` beyond the default:
+`uv run pytest` (plus `-m browser` separately). Items that touched what
+those tests measure, and what to look at:
+
+- **Established findings** (`test_established_findings.py`, all 10): no
+  item changed `qc.crossover_stats`, the mask or the default
+  `build_surface`; they should pass unchanged. C24 changes smoothing only
+  after the mask is computed.
+- **Session counts** (C25): `test_merge.py::test_the_two_real_formats_merge`
+  expects 3 sessions. Report the new count rather than editing the test
+  blind - a proven mount change would split a day, and logging past
+  midnight would now merge two.
+- **Level network** (C1, C2, A4): the real `bldg` shots now join the
+  network; `test_vertical.py` real-data tests (`test_level_network_*`,
+  `test_local_datum_*`, `test_tying_the_datum_*`,
+  `test_benchmark_that_was_never_shot_is_refused`) should still pass, but
+  degrees of freedom and residuals may differ.
+- **Session offsets** (C6, O1): `test_real_two_session_offset_is_well_determined`
+  (now cell-based) and `test_session_offsets_*`.
+- **Surface and export** (C10, C16, C24): the updated
+  `test_world_file_points_at_the_north_west_pixel_centre` and
+  `test_the_3d_grid_pairs_rows_with_northings` (now feet).
+- **Readers** (C8, C9, C11, C7, C2): `test_swmz.py` real-archive tests.
