@@ -14,8 +14,52 @@ the listing a native dialog would have shown.
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
+
+
+# --- recent files -------------------------------------------------------------
+#
+# Kept in the cache folder, which is git-ignored like everything else that
+# names a place on this machine.
+
+RECENT_FILE = "recent.json"
+MAX_RECENT = 8
+
+
+def _read_recent(cache_dir) -> list[dict]:
+    try:
+        items = json.loads((Path(cache_dir) / RECENT_FILE).read_text("utf-8"))
+    except (OSError, ValueError):
+        return []
+    return [it for it in items if isinstance(it, dict) and it.get("path")] \
+        if isinstance(items, list) else []
+
+
+def recent_files(cache_dir) -> list[dict]:
+    """Exports and projects opened lately, newest first, that still exist."""
+    out = []
+    for it in _read_recent(cache_dir):
+        path = Path(str(it["path"]))
+        if path.exists():
+            out.append({"path": str(path), "name": path.name,
+                        "folder": str(path.parent),
+                        "kind": "project" if it.get("kind") == "project" else "export"})
+    return out[:MAX_RECENT]
+
+
+def remember_recent(cache_dir, path, kind: str) -> None:
+    """Put a file at the top of the recent list. Never fails the action."""
+    path = str(Path(path).resolve())
+    items = [it for it in _read_recent(cache_dir) if it.get("path") != path]
+    items.insert(0, {"path": path, "kind": kind})
+    try:
+        Path(cache_dir).mkdir(parents=True, exist_ok=True)
+        (Path(cache_dir) / RECENT_FILE).write_text(
+            json.dumps(items[:MAX_RECENT], indent=1), "utf-8")
+    except OSError:
+        pass
 
 
 def roots() -> list[str]:

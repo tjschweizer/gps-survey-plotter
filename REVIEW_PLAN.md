@@ -121,6 +121,7 @@ These were set by the owner and apply to every item.
 | After C21 | 424 passed, 51 skipped, 53 deselected | not re-run (no page change) |
 | After C22 | 424 passed, 51 skipped, 54 deselected | 49 passed |
 | After C23 | 424 passed, 51 skipped, 55 deselected | 50 passed |
+| After A8 | 425 passed, 51 skipped, 56 deselected | 51 passed |
 
 Of the 55 skips, 50 need real data. The other 5 are network tests that the
 sandbox proxy refused.
@@ -206,8 +207,8 @@ These answers change the designs in section 5.
 | 30 | C20 | Readable filter stack | UI | ✅ `f3a6f34` |
 | 31 | C21 | Grouped fetch errors and a short connect timeout | UI | ✅ `8cd2b66` |
 | 32 | C22 | File dialog: date column, sorting, keyboard | UI | ✅ `e361792` |
-| 33 | C23 | Keyboard menus and labelled fields | UI | ✅ |
-| 34 | A8 | Start panel and recent files | UI | todo |
+| 33 | C23 | Keyboard menus and labelled fields | UI | ✅ `4cfb6fb` |
+| 34 | A8 | Start panel and recent files | UI | ✅ |
 | 35 | C29 | Solve report wording | UI | todo |
 | 36 | C10 | World file on the grid | processing | todo |
 | 37 | C24 | Surface smoothing sized in metres | processing | todo |
@@ -1186,7 +1187,17 @@ Evidence for these is in the review screenshots: synthetic export,
 - **Verify:** browser test.
 - **Breaking?:** no.
 
-**A8 — Start panel and recent files**
+**A8 — Start panel and recent files** ✅
+- **Done:** `web/files.py` `remember_recent` / `recent_files` keep up to 8
+  exports and projects, newest first, in `<cache>/recent.json` (the cache
+  folder is git-ignored); files gone from disk are not listed, and a failed
+  write never fails the action. The server remembers every open export, add
+  export, open project and save project, and the snapshot carries `recent`
+  only while nothing is loaded. `#start` in the plan view (`main.js`
+  `renderStart`): Open export…, Open project…, and the recent files (kind,
+  name, folder), each opening with one click; hidden once data is loaded.
+  Tests: `test_web_api.py::test_opened_files_are_remembered_for_the_start_panel`,
+  `test_web_browser.py::test_an_empty_page_offers_a_way_in`.
 - **What:** with nothing loaded, the map area offers Open export, Open
   project, and up to 8 recent files. The list is stored in the git-ignored
   cache folder. Files: `server.py`, `main.js`, `app.css`.

@@ -858,3 +858,34 @@ def test_the_filter_stack_reads_in_words(client, state):
     saved = next(d for d in state.chain.to_list() if d["kind"] == "fix_select")
     assert saved["values"] == [4, 5]
     assert set(state.result.df["fix"].unique()) == {4, 5}
+
+
+def test_opened_files_are_remembered_for_the_start_panel(tmp_path, synthetic_zip,
+                                                         synthetic_outing2):
+    from gpsrtk.app import AppState
+    from gpsrtk.site import example_site
+    from gpsrtk.web import files
+
+    cache = tmp_path / "cache"
+    st = AppState(site=example_site(), cache_dir=cache)
+    c = TestClient(create_app(st), base_url="http://127.0.0.1", headers=ACTION)
+    assert c.get("/api/state").json()["recent"] == []
+    post(c, "/api/export/open", {"path": str(synthetic_zip)})
+    post(c, "/api/export/add", {"path": str(synthetic_outing2)})
+    post(c, "/api/project/save", {"path": str(tmp_path / "p.yardproj"), "view": {}})
+    assert c.get("/api/state").json()["recent"] == [], "only the empty page lists them"
+
+    fresh = AppState(site=example_site(), cache_dir=cache)
+    recent = TestClient(create_app(fresh), base_url="http://127.0.0.1").get(
+        "/api/state").json()["recent"]
+    assert [(r["name"], r["kind"]) for r in recent] == [
+        ("p.yardproj", "project"), ("Outing 2.zip", "export"),
+        ("Synthetic Yard.zip", "export")]
+
+    for k in range(12):                           # never more than eight
+        f = tmp_path / f"x{k}.zip"
+        f.write_bytes(b"")
+        files.remember_recent(cache, f, "export")
+    (tmp_path / "x11.zip").unlink()               # gone from disk: not listed
+    names = [r["name"] for r in files.recent_files(cache)]
+    assert len(names) == 7 and names[0] == "x10.zip"

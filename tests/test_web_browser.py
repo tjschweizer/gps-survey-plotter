@@ -898,3 +898,42 @@ def test_the_menus_work_from_the_keyboard(page, live):
     assert page.evaluate("() => document.activeElement.id") == "datum-elev"
     assert dialog.get_by_label("Held at elevation (ft)").input_value() == "100"
     page.keyboard.press("Escape")
+
+
+def test_an_empty_page_offers_a_way_in(browser, synthetic_zip, tmp_path):
+    """With nothing loaded the map offered no first move. It now shows Open
+    export, Open project and the files opened lately."""
+    import uvicorn
+
+    from gpsrtk.web import files
+
+    cache = tmp_path / "cache"
+    files.remember_recent(cache, synthetic_zip, "export")
+    state = AppState(site=example_site(), cache_dir=cache)
+    app = create_app(state)
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port,
+                                           log_level="warning"))
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    while not server.started:
+        time.sleep(0.05)
+    context = browser.new_context(viewport={"width": 1500, "height": 900})
+    pg = context.new_page()
+    try:
+        pg.goto(f"http://127.0.0.1:{port}/")
+        start = pg.locator("#start")
+        start.wait_for()
+        assert "Open export…" in start.inner_text() and "Open project…" in start.inner_text()
+        item = start.locator(".recent-item")
+        assert item.count() == 1 and "Synthetic Yard.zip" in item.inner_text()
+        item.click()
+        pg.wait_for_function("() => window.yardsurvey.store.state?.has_data")
+        assert start.is_hidden()
+        assert len(state.layers["track_points"]) > 0
+    finally:
+        context.close()
+        server.should_exit = True
+        thread.join(10)

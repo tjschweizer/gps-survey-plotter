@@ -272,6 +272,9 @@ class Server:
             "home": (views.local_extent(site, home) if home is not None
                      else None),
             "plan": PE.plan_payload(st.plan, site),
+            # Only the empty page's start panel shows these.
+            "recent": (files.recent_files(st.cache_dir) if st.result is None
+                       else []),
             "view": st.view,
             "providers": self.providers(),
         }
@@ -487,6 +490,7 @@ def create_app(state: AppState | None = None, *, vector_providers=None,
         with srv.acting("Reading export…"), srv.guard("Could not open"):
             result = st.load(path)
         srv.remember_dir(path)
+        files.remember_recent(st.cache_dir, path, "export")
         parts = []
         if result.reprojected:
             parts.append("These layers were re-projected into the site's CRS "
@@ -508,6 +512,7 @@ def create_app(state: AppState | None = None, *, vector_providers=None,
                 with srv.guard("Could not open"):
                     result = st.load(path)
                 srv.remember_dir(path)
+                files.remember_recent(st.cache_dir, path, "export")
                 if result.notes:
                     return srv.reply(notice("Export opened",
                                             "\n\n".join(result.notes)))
@@ -515,6 +520,7 @@ def create_app(state: AppState | None = None, *, vector_providers=None,
             with srv.guard("Could not add"):
                 result = st.add_export(path)
             srv.remember_dir(path)
+            files.remember_recent(st.cache_dir, path, "export")
             st.statusMessage.emit(
                 f"Merged {Path(path).name}: {result.added:,} points added")
             return srv.reply(_merge_notice(result, "Export merged"))
@@ -554,6 +560,7 @@ def create_app(state: AppState | None = None, *, vector_providers=None,
             with srv.guard("Could not open project"):
                 _, warnings = st.load_project(path)
             srv.remember_dir(path)
+            files.remember_recent(st.cache_dir, path, "project")
             if warnings:
                 return srv.reply(notice(
                     "Project opened with warnings",
@@ -573,8 +580,9 @@ def create_app(state: AppState | None = None, *, vector_providers=None,
                 raise UserError("Save project",
                                 "Choose where to save the project.", "info")
             with srv.guard("Could not save"):
-                st.save_project(path, body.get("view"))
+                saved = st.save_project(path, body.get("view"))
             srv.remember_dir(path)
+            files.remember_recent(st.cache_dir, saved, "project")
             return srv.reply()
 
     # --- layers and the filter stack -------------------------------------

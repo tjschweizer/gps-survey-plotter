@@ -12,7 +12,9 @@ import "./panels/basemaps.js";
 import "./panels/plan.js";
 import "./panels/vertical.js";
 import { buildMenus, SHORTCUTS } from "./menus.js";
-import { setMode } from "./actions.js";
+import { setMode, openExport, openProject } from "./actions.js";
+import { act } from "./api.js";
+import { h } from "./dom.js";
 import { isTyping, remember, recall } from "./dom.js";
 import { showNotice } from "./dialogs.js";
 
@@ -127,6 +129,38 @@ refresh().catch((err) => {
   showNotice({ title: "No connection", level: "error",
                text: "The Yard Survey server is not answering.\n\n" + err });
 });
+
+// --- the empty page ---------------------------------------------------------------
+//
+// With nothing loaded the map is a blank canvas with no obvious first move.
+// It offers the two ways in, and the last few files opened.
+
+const start = document.getElementById("start");
+let startFor = null;
+
+function renderStart(state) {
+  start.hidden = state.has_data;
+  if (state.has_data) return;
+  const key = JSON.stringify(state.recent ?? []);
+  if (key === startFor) return;
+  startFor = key;
+  const open = (r) => act(r.kind === "project" ? "/api/project/open" : "/api/export/open",
+                          { path: r.path }, { busy: `Opening ${r.name}…` });
+  start.replaceChildren(h("div", { class: "start-box" },
+    h("h2", {}, "Yard Survey"),
+    h("div", { class: "row" },
+      h("button", { class: "primary", onclick: openExport }, "Open export…"),
+      h("button", { onclick: openProject }, "Open project…")),
+    (state.recent ?? []).length
+      ? h("div", { class: "recent" },
+          h("div", { class: "recent-title" }, "Recent"),
+          state.recent.map((r) => h("button", { class: "recent-item", title: r.path, onclick: () => open(r) },
+            h("span", { class: "kind" }, r.kind === "project" ? "project" : "export"),
+            h("span", { class: "name" }, r.name),
+            h("span", { class: "folder" }, r.folder))))
+      : h("div", { class: "muted" }, "Recently opened exports and projects will be listed here.")));
+}
+subscribe(renderStart);
 
 // For tests and the console: the latest snapshot, the map, and a way to
 // fetch the state again after something changed it from outside the page.
