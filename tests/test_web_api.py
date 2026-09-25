@@ -785,3 +785,23 @@ def test_the_revit_export_says_how_many_laser_shots_it_added(client):
     assert "12 laser terrain shots were added" in reply["notice"]["text"]
     reply = post(client, "/api/export/heightmap")
     assert "12 laser terrain shots replace the GNSS" in reply["notice"]["text"]
+
+
+def test_the_status_strip_says_what_the_heights_are(client):
+    strip = client.get("/api/state").json()["strip"]
+    texts = [s["text"] for s in strip]
+    assert texts[0] == "Datum: raw ellipsoidal, not solved" and strip[0]["level"] == "warn"
+    assert "model: none" in texts and "RTK fixed only" in texts
+    assert any(t.endswith("% measured") for t in texts)
+
+    strip = post(client, "/api/vertical/solve", {"mode": "local"})["state"]["strip"]
+    assert strip[0]["text"] == "Datum: local, arbitrary origin"
+    assert "model: local" in [s["text"] for s in strip]
+
+
+def test_the_strip_says_when_session_offsets_are_unsolved(client, synthetic_outing2):
+    post(client, "/api/export/add", {"path": str(synthetic_outing2)})
+    strip = client.get("/api/state").json()["strip"]
+    assert {"text": "2 sessions, offsets NOT solved", "level": "warn"} in strip
+    strip = post(client, "/api/vertical/solve", {"mode": "ellipsoidal"})["state"]["strip"]
+    assert {"text": "2 sessions, offsets solved", "level": "ok"} in strip

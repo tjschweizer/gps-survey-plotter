@@ -25,6 +25,10 @@ let names = "";
 const offE = h("input", { type: "number", step: "0.1", "aria-label": "shift east (ft)" });
 const offN = h("input", { type: "number", step: "0.1", "aria-label": "shift north (ft)" });
 const note = h("div", { class: "muted small" });
+// Shifting imagery means nothing until there is imagery, so the group stays
+// folded away until the first basemap arrives.
+let alignment = null;
+let hadBasemaps = null;
 
 function setOffset() {
   const de = Number(offE.value), dn = Number(offN.value);
@@ -39,8 +43,8 @@ clear(body).append(
   h("div", { class: "row" },
     h("button", { onclick: fetchAllImagery }, "Fetch all basemaps"),
     h("button", { onclick: () => act("/api/imagery/clear") }, "Clear")),
-  h("div", { class: "group" },
-    h("div", { class: "legend" }, "Alignment"),
+  alignment = h("details", { class: "group alignment" },
+    h("summary", { class: "legend" }, "Alignment"),
     h("div", { class: "grid2" }, h("label", {}, "east (ft)"), offE, h("label", {}, "north (ft)"), offN),
     h("div", { class: "row" },
       h("button", {
@@ -99,6 +103,12 @@ subscribe((state) => {
   empty.textContent = state.basemaps_empty;
   empty.hidden = state.basemaps.length > 0;
   list.hidden = state.basemaps.length === 0;
+
+  const has = state.basemaps.length > 0;
+  if (has !== hadBasemaps) {
+    alignment.open = has;
+    hadBasemaps = has;
+  }
 
   const off = state.imagery_offset;
   if (document.activeElement !== offE) offE.value = off.de_ft.toFixed(2);

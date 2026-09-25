@@ -95,11 +95,16 @@ document.addEventListener("keydown", (e) => {
 
 const qc = document.getElementById("qc");
 const status = document.getElementById("status");
+const strip = document.getElementById("status-strip");
 let menusFor = null;
 
 subscribe((state, prev) => {
   document.title = state.title;
   qc.textContent = state.qc;
+  // What the heights mean, and how the data stands, above the map where it
+  // is seen rather than at the bottom of the last panel.
+  strip.replaceChildren(...(state.strip ?? []).map((s) =>
+    Object.assign(document.createElement("span"), { className: `seg ${s.level}`, textContent: s.text })));
   if (changed(state, prev, "status")) {
     status.textContent = state.status || "Ready. File ▸ Open export… to begin.";
   }

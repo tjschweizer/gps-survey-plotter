@@ -144,6 +144,48 @@ def qc_text(state, slope=None) -> str:
     return "\n".join(lines)
 
 
+# --- the status strip above the map ---------------------------------------------------
+
+def status_strip(state) -> list[dict]:
+    """What the heights mean and how the data stands, in one line.
+
+    The datum used to be stated only in the last right-hand panel, below
+    the fold at common window sizes - and it is the one thing that decides
+    whether a number on screen means anything. Each segment has a `level`:
+    "ok", "info" or "warn".
+    """
+    if state.result is None:
+        return []
+    model, site = state.vertical, state.site
+    if model is None:
+        datum, level = "raw ellipsoidal, not solved", "warn"
+    else:
+        datum = height_label(model, site, ELEV, short=True)
+        level = ("ok" if datum.startswith("tied") else
+                 "warn" if "ellipsoidal" in datum else "info")
+        if datum == "local datum":
+            datum = "local, arbitrary origin"
+    out = [{"text": f"Datum: {datum}", "level": level},
+           {"text": f"model: {model.mode if model else 'none'}",
+            "level": "info" if model else "warn"}]
+
+    names = state.sessions
+    if len(names) > 1:
+        solved = model is not None and all(n in (model.offsets or {}) for n in names)
+        out.append({"text": f"{len(names)} sessions, offsets "
+                            + ("solved" if solved else "NOT solved"),
+                    "level": "ok" if solved else "warn"})
+    elif names:
+        out.append({"text": "1 session", "level": "info"})
+
+    if state.surface is not None:
+        out.append({"text": f"{state.surface.measured_fraction * 100:.0f}% measured",
+                    "level": "info"})
+    out.append({"text": filter_summary(state.chain) or "no filters",
+                "level": "info"})
+    return out
+
+
 # --- the plan view's info line --------------------------------------------------------
 
 def info_bits(state) -> list[str]:

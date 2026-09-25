@@ -261,6 +261,7 @@ class Server:
                          "mode": st.vertical.mode if st.vertical else None,
                          "text": report.vertical_text(st)},
             "qc": self.qc_text(),
+            "strip": report.status_strip(st),
             "info": report.info_bits(st),
             "points_note": views.points_note(st),
             "sessions": self.sessions(),

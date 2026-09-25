@@ -270,7 +270,22 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); margi
 }
 #tabs button[aria-selected="true"] { background: var(--panel); border-color: var(--border); font-weight: 600; }
 .view { display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 0; min-width: 0; position: relative; }
-#view-plan { grid-template-rows: auto auto minmax(0, 1fr); }
+#view-plan { grid-template-rows: auto auto auto minmax(0, 1fr); }
+.strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  padding: 3px 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  font-size: 12px;
+  min-width: 0;
+}
+.strip:empty { display: none; }
+.strip .seg { white-space: nowrap; }
+.strip .seg.warn { color: var(--warn); font-weight: 600; }
+.strip .seg.ok { color: var(--ok); }
+.strip .seg:first-child { font-weight: 600; }
 #terrain-toolbar { background: #fafbfc; }
 #terrain-toolbar input[type="number"] { width: 52px; }
 .toolbar {

@@ -608,3 +608,12 @@ def test_spot_labels_appear_when_zoomed_in(page, live):
     assert labels[0] is None
     assert labels[1].isdigit()
     assert "lawn" in labels[2] and " in" in labels[2] and "2026-08-27" in labels[2]
+
+
+def test_the_status_strip_sits_above_the_map(page, live):
+    strip = page.locator("#status-strip")
+    assert strip.inner_text().startswith("Datum: raw ellipsoidal")
+    box, map_box = strip.bounding_box(), page.locator("#map").bounding_box()
+    assert box["y"] + box["height"] <= map_box["y"] + 1
+    # With no basemap there is nothing to align: the group stays folded.
+    assert page.locator("#panel-basemaps details.alignment").get_attribute("open") is None
