@@ -167,18 +167,20 @@ def _rows(plan, site) -> str:
         else:
             where = f"{e:.1f}, {n:.1f}"
         line = next((ln.line_id for ln in plan.lines if p.number in ln.numbers), "")
+        # The same order as the readings table it is typed back into: the
+        # number, then the rod reading, the one box every row needs.
         out.append(
             "<tr>"
             f'<td class="num-cell">{p.number}</td>'
-            f"<td>{html.escape(p.purpose)}</td>"
-            f"<td>{html.escape(line)}</td>"
-            f"<td>{html.escape(p.setup)}</td>"
-            f'<td class="coord">{where}</td>'
             '<td class="blank"></td>'        # rod reading
+            f"<td>{html.escape(p.purpose)}</td>"
+            f"<td>{html.escape(p.setup)}</td>"
             '<td class="blank tick"></td>'   # GNSS fixed?
+            f'<td class="coord">{where}</td>'
             '<td class="blank"></td>'        # GNSS point name or coordinates
             '<td class="blank tie"></td>'    # tie A: # / ft
             '<td class="blank tie"></td>'    # tie B: # / ft
+            f"<td>{html.escape(line)}</td>"
             '<td class="blank wide"></td>'   # notes
             "</tr>")
     return "\n".join(out)
@@ -344,11 +346,10 @@ def write_field_sheet(plan, path: str | Path, *, basemap=None, site=None,
 <table>
   <thead>
     <tr>
-      <th>#</th><th>Purpose</th><th>Line</th><th>Setup</th>
-      <th>Plan E,N (ft)</th><th>Rod (in)</th><th>Fixed</th>
-      <th>GNSS pt / E,N</th>
+      <th>#</th><th>Rod (in)</th><th>Purpose</th><th>Setup</th><th>Fixed</th>
+      <th>Plan E,N (ft)</th><th>GNSS pt / E,N</th>
       <th>Tie A &nbsp;#&nbsp;|&nbsp;ft</th><th>Tie B &nbsp;#&nbsp;|&nbsp;ft</th>
-      <th>Notes</th>
+      <th>Line</th><th>Notes</th>
     </tr>
   </thead>
   <tbody>

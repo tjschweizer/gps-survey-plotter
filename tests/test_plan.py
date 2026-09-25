@@ -336,3 +336,18 @@ def test_the_field_sheet_has_a_closure_block_per_setup(tmp_path):
     text = write_field_sheet(plan, tmp_path / "b.html").read_text("utf-8")
     assert text.count('class="setup"') == 3
     assert "Laser setup C" in text and "Observer" in text
+
+
+def test_the_field_sheet_puts_the_rod_reading_second(tmp_path):
+    """The same order as the readings table it is typed back into."""
+    import re
+
+    from gpsrtk.io.fieldsheet import write_field_sheet
+    from gpsrtk.plan import Plan
+
+    plan = Plan()
+    plan.add_point(449712.0, 4604565.0)
+    text = write_field_sheet(plan, tmp_path / "s.html").read_text("utf-8")
+    heads = re.findall(r"<th>([^<]*)", text.split("<thead>")[1].split("</thead>")[0])
+    assert heads[:5] == ["#", "Rod (in)", "Purpose", "Setup", "Fixed"]
+    assert heads[-2:] == ["Line", "Notes"]

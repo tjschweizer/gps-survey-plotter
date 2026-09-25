@@ -41,7 +41,7 @@ MODE_HINTS = {
 METHODS = ["planned", "rtk", "taped", "station_offset"]
 
 # The editable columns of the readings table, in the printed sheet's order.
-FIELDS = ("purpose", "line", "setup", "rod", "fix", "method", "note")
+FIELDS = ("rod", "purpose", "setup", "fix", "method", "line", "note")
 
 # Frames a measured position can be typed in. A receiver read in the field
 # gives lat/lon or UTM; a value read off the plan or the field sheet is in

@@ -116,6 +116,7 @@ These were set by the owner and apply to every item.
 | After C16 | 420 passed, 51 skipped, 47 deselected | 42 passed |
 | After C17 | 420 passed, 51 skipped, 49 deselected | 44 passed |
 | After C18 | 420 passed, 51 skipped, 51 deselected | 46 passed |
+| After C19 | 421 passed, 51 skipped, 52 deselected | 47 passed |
 
 Of the 55 skips, 50 need real data. The other 5 are network tests that the
 sandbox proxy refused.
@@ -196,8 +197,8 @@ These answers change the designs in section 5.
 | 25 | C15 | Success reports stop being modal | UI | ✅ `67b579a` |
 | 26 | C16 | Consistent units in 2D, 3D and layers | UI | ✅ `4eec96e` |
 | 27 | C17 | Legend: ticks, marker key, no overlap | UI | ✅ `b336ab9` |
-| 28 | C18 | Contrast, colour tokens, type and spacing scale | UI | ✅ |
-| 29 | C19 | Rod column second, in the table and the field sheet | UI | todo |
+| 28 | C18 | Contrast, colour tokens, type and spacing scale | UI | ✅ `0a653d7` |
+| 29 | C19 | Rod column second, in the table and the field sheet | UI | ✅ |
 | 30 | C20 | Readable filter stack | UI | todo |
 | 31 | C21 | Grouped fetch errors and a short connect timeout | UI | todo |
 | 32 | C22 | File dialog: date column, sorting, keyboard | UI | todo |
@@ -1099,7 +1100,15 @@ Evidence for these is in the review screenshots: synthetic export,
 - **Verify:** a contrast check in the browser tests.
 - **Breaking?:** no.
 
-**C19 — Rod column second, in the table and the field sheet**
+**C19 — Rod column second, in the table and the field sheet** ✅
+- **Done:** the table is `# · Rod · Purpose · Setup · Fixed · Method · Line
+  · Notes`, with `#` and Rod both frozen (so Rod never scrolls out of the
+  dock) and slightly narrower columns; `plan_edit.FIELDS` follows. The
+  field sheet is `# · Rod (in) · Purpose · Setup · Fixed · Plan E,N · GNSS
+  pt / E,N · Tie A · Tie B · Line · Notes`: the table's order, with the
+  position boxes where Method sits. Tests:
+  `test_web_browser.py::test_rod_is_the_second_column_and_stays_in_view`,
+  `test_plan.py::test_the_field_sheet_puts_the_rod_reading_second`.
 - **What:** order the columns `# · Rod · Purpose · Setup · Fixed · Method ·
   Line · Notes`, compact enough that Rod never scrolls out of a 390 px dock.
   Change the printed field sheet to match. Files: `panels/plan.js`,

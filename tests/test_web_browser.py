@@ -786,3 +786,19 @@ def test_dialogs_say_their_severity_in_words(page, live):
     dialog.wait_for()
     assert dialog.locator(".dlg-title .severity").inner_text().lower() == "warning"
     dialog.locator("button").last.click()
+
+
+def test_rod_is_the_second_column_and_stays_in_view(page, live):
+    """Rod is the only required field; it was the fifth column, clipped in a
+    390 px dock."""
+    seed(live, page, (E0, N0))
+    fields = page.evaluate("""() => [...document.querySelectorAll(
+        '#plan-table .tabulator-col')].map((c) => c.getAttribute('tabulator-field'))""")
+    assert fields[:2] == ["number", "rod"]
+    assert fields[2:] == ["purpose", "setup", "fix", "method", "line", "note"]
+    dock = page.locator("#right").bounding_box()
+    rod = row_cell(page, 1, "rod").bounding_box()
+    assert rod["x"] + rod["width"] <= dock["x"] + dock["width"]
+    page.locator("#plan-table .tabulator-tableholder").evaluate("(el) => el.scrollLeft = 1000")
+    rod = row_cell(page, 1, "rod").bounding_box()
+    assert dock["x"] <= rod["x"] and rod["x"] + rod["width"] <= dock["x"] + dock["width"]

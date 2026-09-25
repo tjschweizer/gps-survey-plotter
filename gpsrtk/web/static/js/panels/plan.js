@@ -74,20 +74,23 @@ const table = new Tabulator(tableEl, {
   columnDefaults: { headerSort: false, resizable: true, minWidth: 34 },
   columns: [
     // Frozen: the number is what links a row to its marker and to the sheet,
-    // so it stays in view however far the table is scrolled sideways.
-    { title: "#", field: "number", width: 42, resizable: false, frozen: true },
-    { title: "Purpose", field: "purpose", width: 118, editable, editor: "list",
+    // and the rod reading is the one field that must be filled in, so both
+    // stay in view however far the table is scrolled sideways - Rod used to
+    // be the fifth column, clipped in a 390 px dock.
+    { title: "#", field: "number", width: 40, resizable: false, frozen: true },
+    { title: "Rod (in)", field: "rod", width: 66, hozAlign: "right", editable, editor: "input",
+      frozen: true },
+    { title: "Purpose", field: "purpose", width: 110, editable, editor: "list",
       editorParams: { valuesLookup: () => plan()?.purposes ?? [], autocomplete: true, listOnEmpty: true } },
-    { title: "Line", field: "line", width: 80, editable, editor: "list",
-      editorParams: { valuesLookup: () => ["", ...(plan()?.line_ids ?? [])] } },
-    { title: "Setup", field: "setup", width: 58, editable, editor: "list",
+    { title: "Setup", field: "setup", width: 54, editable, editor: "list",
       editorParams: { valuesLookup: () => plan()?.setup_choices ?? [""],
                       autocomplete: true, freetext: true, allowEmpty: true, listOnEmpty: true } },
-    { title: "Rod (in)", field: "rod", width: 70, hozAlign: "right", editable, editor: "input" },
-    { title: "Fixed", field: "fix", width: 52, editable, editor: "list",
+    { title: "Fixed", field: "fix", width: 50, editable, editor: "list",
       editorParams: { values: ["", "yes"] } },
-    { title: "Method", field: "method", width: 104, editable, editor: "list",
+    { title: "Method", field: "method", width: 100, editable, editor: "list",
       editorParams: { valuesLookup: () => plan()?.methods ?? [] } },
+    { title: "Line", field: "line", width: 76, editable, editor: "list",
+      editorParams: { valuesLookup: () => ["", ...(plan()?.line_ids ?? [])] } },
     { title: "Notes", field: "note", minWidth: 110, editable, editor: "input" },
   ],
   // Shot rows go green; the purpose group tints the rest, so control and
