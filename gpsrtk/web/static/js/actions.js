@@ -162,5 +162,9 @@ export const exportContourMap = () =>
     { interval_cm: map2d.viewSettings().contour_interval_cm },
     { busy: "Drawing the contour map…" });
 
+// Needs no data: a plan and a site are enough to go out with.
+export const exportFieldProject = () =>
+  act("/api/export/swmaps", {}, { busy: "Writing the SW Maps field project…" });
+
 export const resetView2D = () => map2d.resetView();
 export const resetView3D = () => view3d.resetView();

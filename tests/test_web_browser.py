@@ -656,6 +656,19 @@ def test_the_printed_maps_follow_the_view_settings(page):
     assert info.value.suggested_filename == "slope_map.png"
 
 
+def test_the_field_project_downloads_from_the_export_menu(page, live):
+    """Named for the site and the day: SW Maps names the project after it."""
+    seed(live, page, (E0, N0))
+    page.click("#menubar .menu-root > button:has-text('Export')")
+    with page.expect_download() as info:
+        page.locator("#menubar .menu:visible button.item:has-text('SW Maps field project')").click()
+    name = info.value.suggested_filename
+    assert name.startswith("example site 20") and name.endswith(".swmz")
+    toast = page.locator("#toasts .toast").last
+    toast.wait_for()
+    assert "SW Maps field project" in toast.inner_text()
+
+
 def test_control_marks_are_added_from_the_datum_menu(page, live):
     """Datum ▸ Control marks… adds a mark, which the site then carries."""
     page.click("#menubar .menu-root > button:has-text('Datum')")

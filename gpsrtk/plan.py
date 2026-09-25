@@ -100,6 +100,9 @@ PURPOSES: tuple[str, ...] = tuple(
     p for group in PURPOSE_GROUPS.values() for p in group)
 
 TERRAIN_PURPOSES = frozenset(PURPOSE_GROUPS["terrain"])
+# The `kind` of a shot on the ground itself: "lawn", as the spot layers have
+# always said, or a terrain purpose picked for an unplanned shot on the phone.
+TERRAIN_KINDS: tuple[str, ...] = ("lawn",) + PURPOSE_GROUPS["terrain"]
 CONTROL_PURPOSES = frozenset(PURPOSE_GROUPS["control"])
 GUIDE_PURPOSES = frozenset(PURPOSE_GROUPS["guide"])
 
@@ -502,13 +505,15 @@ class Plan:
     def fill_from_records(self, records) -> FillReport:
         """Fill plan shots from SW Maps records recorded as "P12".
 
-        `records` are dicts with `number`, `e`, `n`, `fix`, `rod_in`, `setup`
-        and a `label` to report them by, earliest first. A record:
+        `records` are dicts with `number`, `e`, `n`, `fix`, `rod_in`, `setup`,
+        optionally a `note`, and a `label` to report them by, earliest
+        first. A record:
 
           * gives its position and fix only if it is RTK FIXED and the shot
             has no measured position yet - a float fix is worse than the
             planned click, which is the field sheet's own rule;
-          * gives its rod reading, and its setup, only to an empty cell.
+          * gives its rod reading, and its setup, only to an empty cell;
+          * gives its remarks to the shot's notes, only if they are empty.
 
         Nothing is ever overwritten. A fixed position more than 10 cm from
         the measured one, or a different reading on the same setup, is
@@ -535,6 +540,11 @@ class Plan:
                         report.conflicts.append(
                             f"{name}: {label} is {away:.2f} m from the "
                             "measured position")
+
+            note = str(r.get("note") or "").strip()
+            if note and not p.observed_note:
+                p.observed_note = note
+                report.filled.append(f"{name}: note \"{note}\" from {label}")
 
             rod = r.get("rod_in")
             if rod is None or not math.isfinite(rod):

@@ -282,6 +282,37 @@ def field_sheet_notice(has_basemap: bool) -> str:
                "imagery first if you want to find the points on the ground."))
 
 
+def field_project_notice(result) -> str:
+    """What went into a SW Maps field project, and what to do with it."""
+    shots = len(result.outstanding)
+    lines = [
+        f"{result.path.name}: import it into SW Maps as a project for the "
+        "next outing.",
+        "",
+        f"plan            {shots} outstanding shot{'s' if shots != 1 else ''}, "
+        "to find with Stake Out" if shots else
+        "plan            nothing outstanding - every shot has its reading "
+        "and every outline corner is located",
+        f"shots           station from {len(result.stations)} choices, setup "
+        f"from {', '.join(result.setups)}",
+    ]
+    if result.marks:
+        lines.append(f"control checks  {', '.join(result.marks)}, with the "
+                     "fixed-height pole")
+    else:
+        lines.append("control checks  left out: no control marks are declared "
+                     "(Datum ▸ Control marks…)")
+    lines += [
+        "",
+        "Record every reading as a new point in `shots` - with GNSS, or by "
+        "tapping your position under canopy - and pick its station; its type "
+        "only if it is not a plan shot. After the outing export the project "
+        "(.swmz) and use File ▸ Add export. The plan layer is left out on the "
+        "way back in.",
+    ]
+    return "\n".join(lines)
+
+
 def linework_note(layer) -> str:
     note = layer.describe()
     if not layer.survey_grade:

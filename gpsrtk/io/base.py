@@ -26,6 +26,8 @@ class SurveyExport:
     source_path: Path
     layers: dict[str, PointSet] = field(default_factory=dict)
     tables: dict[str, pd.DataFrame] = field(default_factory=dict)  # non-point
+    # What the reader left out or read differently, for the user.
+    notes: list[str] = field(default_factory=list)
 
     def __getitem__(self, key: str) -> PointSet:
         return self.layers[key]

@@ -53,6 +53,7 @@ from ..model.pointset import (
 from .base import (SurveyExport, SurveyReader, normalise_kind, numeric,
                    register_reader, rod_readings)
 from .swmaps import assign_sessions
+from .swmaps_field import MARK_FIELD, ROD_FIELD, apply_conventions
 
 SUFFIXES = (".swmz", ".swm2")
 TRACK_LAYER = "track_points"
@@ -83,6 +84,9 @@ ATTRIBUTE_ALIASES = {
     "type": KIND,
     "station": STATION,
     "notes": "notes",
+    # a field project's (see swmaps_field); `setup` is already canonical
+    ROD_FIELD: ROD_IN,
+    MARK_FIELD: STATION,
 }
 
 
@@ -130,6 +134,7 @@ class SWMapsProjectReader(SurveyReader):
             exp.layers[str(label)] = PointSet(
                 df=frame, layer=str(label),
                 history=(f"read {path.name} ({label})",))
+        exp.notes += apply_conventions(exp.layers)
 
         # Recorded, not parsed. Raw observations are the input to a PPK path
         # that does not exist yet, and a reader that silently ignored 47 MB of
@@ -192,24 +197,30 @@ def _read_points(con) -> pd.DataFrame:
     return pd.read_sql_query("SELECT * FROM points ORDER BY time, seq", con)
 
 
-def _layer_labels(con) -> dict[str, tuple[str, str]]:
-    """Map each `points.fid` to (layer label, track/feature name).
+def _layer_labels(con) -> dict[str, tuple[str, str, str]]:
+    """Map each `points.fid` to (layer label, track/feature name, remarks).
 
     A point's `fid` is a track when it came from continuous logging and a
     feature when it was a recorded shot. Both are resolved here so that the
-    caller does not have to care which table a row came from.
+    caller does not have to care which table a row came from. Remarks are
+    what was typed into SW Maps' own notes box on a feature, as the CSV
+    export's `Remarks` column has them.
     """
-    out: dict[str, tuple[str, str]] = {}
+    out: dict[str, tuple[str, str, str]] = {}
     if _table_exists(con, "tracks"):
         for r in con.execute("SELECT uuid, name FROM tracks"):
-            out[r["uuid"]] = (TRACK_LAYER, r["name"] or "")
+            out[r["uuid"]] = (TRACK_LAYER, r["name"] or "", "")
 
     if _table_exists(con, "features") and _table_exists(con, "feature_layers"):
         layers = {r["uuid"]: (r["name"] or "layer")
                   for r in con.execute("SELECT uuid, name FROM feature_layers")}
-        for r in con.execute("SELECT uuid, layer_id, name FROM features"):
+        # Not every project database has been seen with a `remarks` column.
+        columns = {r[1] for r in con.execute("PRAGMA table_info(features)")}
+        remarks = "remarks" if "remarks" in columns else "'' AS remarks"
+        for r in con.execute(f"SELECT uuid, layer_id, name, {remarks} FROM features"):
             label = layers.get(r["layer_id"], "features")
-            out[r["uuid"]] = (_clean_label(label), r["name"] or "")
+            out[r["uuid"]] = (_clean_label(label), r["name"] or "",
+                              r["remarks"] or "")
     return out
 
 
@@ -239,6 +250,10 @@ def _attributes(con) -> pd.DataFrame:
     wide = merged.pivot_table(index="item_id", columns="field_name",
                               values="value", aggfunc="first")
     wide.columns = [ATTRIBUTE_ALIASES.get(str(c), str(c)) for c in wide.columns]
+    # Two fields can name one column - a field project's `station` in one
+    # layer and `mark` in another - and an item only ever has one of them.
+    if wide.columns.duplicated().any():
+        wide = wide.T.groupby(level=0, sort=False).first().T
     return wide
 
 
@@ -318,12 +333,16 @@ def _finish(points: pd.DataFrame, labels: dict, attrs: pd.DataFrame,
         "instrument_ht": ANT_HT, "lat": LAT, "lon": LON,
     })
 
-    df["_layer"] = df["fid"].map(lambda f: labels.get(f, ("points", ""))[0])
-    df[TRACK] = df["fid"].map(lambda f: labels.get(f, ("points", ""))[1])
+    unknown = ("points", "", "")
+    df["_layer"] = df["fid"].map(lambda f: labels.get(f, unknown)[0])
+    df[TRACK] = df["fid"].map(lambda f: labels.get(f, unknown)[1])
     # A recorded shot's name is its feature name, as in the CSV export; a
     # plan shot recorded as "P12" is matched to its station by it.
     if (df["_layer"] != TRACK_LAYER).any():
-        df["feature_name"] = df[TRACK].where(df["_layer"] != TRACK_LAYER)
+        shot = df["_layer"] != TRACK_LAYER
+        df["feature_name"] = df[TRACK].where(shot)
+        remarks = df["fid"].map(lambda f: labels.get(f, unknown)[2])
+        df["remarks"] = remarks.where(shot & remarks.ne(""))
 
     df[TIME], df[TZ] = _local_times(df["time"])
     df = _expand_pos_data(df)
@@ -337,7 +356,9 @@ def _finish(points: pd.DataFrame, labels: dict, attrs: pd.DataFrame,
         df = joined
         if ROD_IN in df.columns:
             df[ROD_IN] = rod_readings(df[ROD_IN])
-        numeric(df, (ROD_IN, SETUP))
+        # The setup stays a label: "A" on a field project, a number on older
+        # projects, and `vertical.resolve_setups` makes 0 and 0.0 the same.
+        # Coercing it to a number here threw every letter away.
         if KIND in df.columns:
             df[KIND] = normalise_kind(df[KIND])
 

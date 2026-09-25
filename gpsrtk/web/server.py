@@ -938,6 +938,22 @@ def create_app(state: AppState | None = None, *, vector_providers=None,
                                     "warning" if raw else "info"),
                              download=download)
 
+    @app.post("/api/export/swmaps")
+    def export_field_project():
+        from ..io.swmaps_field import default_name, write_field_project
+
+        with srv.acting("Writing the SW Maps field project…"):
+            name = _safe_filename(default_name(st.site))
+            with srv.guard("Export failed"), tempfile.TemporaryDirectory() as tmp:
+                result = write_field_project(
+                    st.plan, st.site, Path(tmp) / f"{name}.swmz",
+                    marks=st.site.mark_names, name=name)
+                data = result.path.read_bytes()
+            download = srv.offer(result.path.name, data, "application/zip")
+            return srv.reply(notice("SW Maps field project",
+                                    report.field_project_notice(result)),
+                             download=download)
+
     # --- the shot plan ---------------------------------------------------
 
     def plan_edit(action, message: str | None = None):
@@ -1139,6 +1155,17 @@ def create_app(state: AppState | None = None, *, vector_providers=None,
 
 
 # --- helpers ---------------------------------------------------------------------------
+
+def _safe_filename(name: str) -> str:
+    """A name that is a file name on any system and in a download header.
+
+    SW Maps names the project after the file, so it stays readable: letters,
+    digits, spaces, dots, dashes and underscores are kept.
+    """
+    import re
+
+    return re.sub(r"[^A-Za-z0-9 ._-]+", "_", name).strip(" .") or "field project"
+
 
 def _path(body: dict) -> str:
     path = str(body.get("path") or "").strip()

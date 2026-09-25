@@ -48,7 +48,7 @@ from ..merge import MergeReport, crs_disagreement_m, diagnose, \
     instrument_height_notes, merge_layers, reproject
 from ..model.pointset import PointSet, E, N, SESSION
 from ..georef import ImageryOffset, solve_imagery_offset
-from ..plan import FillReport, Plan
+from ..plan import TERRAIN_KINDS, FillReport, Plan
 from ..project import BasemapState, Project
 from ..site import Site, default_site
 from ..surface import (PREVIEW_SIZE, Extent, Surface, build_surface,
@@ -281,6 +281,7 @@ class AppState:
                 "has easting, northing and elevation columns. Nothing loaded "
                 "has been changed.")
         report = MergeReport()
+        report.notes += exp.notes
         report.notes += instrument_height_notes(exp.layers, path.name)
 
         incoming, reprojected = self._reconcile_crs(exp.layers)
@@ -382,7 +383,7 @@ class AppState:
         if spots is not None and Z in spots.df.columns:
             # Only shots with a GNSS height: a plan reading has none, and
             # would otherwise be listed as a session that overlaps nothing.
-            lawn = KindSelect(names=["lawn"]).apply(
+            lawn = KindSelect(names=list(TERRAIN_KINDS)).apply(
                 spots.select(spots.df[Z].notna().to_numpy(), "has z"))
         checks = self.check_shots()
         if lawn is None or not len(lawn):
@@ -393,16 +394,21 @@ class AppState:
     def check_shots(self):
         """Check shots on control marks, each given the session it checks.
 
-        A SW Maps record whose station is a control mark is a check shot. It
-        belongs to the track session nearest in time within the same export
-        (by the session name's export prefix), if one is within
-        `CHECK_WINDOW_S`: the start and end shots of an outing bracket its
-        passes. Returns a frame of `mark`, `session`, `z`, `time`.
+        A check shot is a record in a field project's `control checks` layer
+        whose mark is one of the site's. Nothing else is: a rod reading on
+        BM1 in `shots` was taken with the antenna on the rod, not on the
+        fixed-height pole, and counting it put the difference between the
+        two into the check residuals. It belongs to the track session
+        nearest in time within the same export (by the session name's export
+        prefix), if one is within `CHECK_WINDOW_S`: the start and end shots
+        of an outing bracket its passes. Returns a frame of `mark`,
+        `session`, `z`, `time`.
         """
         import pandas as pd
 
+        from ..io.swmaps_field import CHECK_KIND
         from ..merge import describe_sessions
-        from ..model.pointset import TIME, Z
+        from ..model.pointset import KIND, TIME, Z
         from ..vertical import stations
 
         columns = ["mark", "session", "z", "time"]
@@ -417,10 +423,11 @@ class AppState:
             if name in (self.active_layer, self.PLAN_LAYER):
                 continue
             d = ps.df
-            if not {Z, TIME, SESSION}.issubset(d.columns):
+            if not {Z, TIME, SESSION, KIND}.issubset(d.columns):
                 continue
             keys = stations(ps, marks)
-            on_mark = (keys.isin(marks) & d[Z].notna() & d[TIME].notna()).to_numpy()
+            on_mark = (d[KIND].eq(CHECK_KIND) & keys.isin(marks)
+                       & d[Z].notna() & d[TIME].notna()).to_numpy()
             for i in d.index[on_mark]:
                 t = d[TIME].at[i]
                 export = str(d[SESSION].at[i]).rsplit("/", 1)[0]
@@ -489,7 +496,7 @@ class AppState:
             if name == self.active_layer or name == self.PLAN_LAYER:
                 continue
             if ROD_IN in ps.df.columns and ps.df[ROD_IN].notna().any():
-                sets.append(ps)
+                sets.append(self._with_plan_kinds(ps))
         planned = self.plan_pointset()
         if planned is not None:
             planned = self._without_copied_readings(planned, sets)
@@ -499,6 +506,30 @@ class AppState:
         if not sets:
             return None
         return sets[0] if len(sets) == 1 else concat(sets, layer="rod shots")
+
+    def _with_plan_kinds(self, ps: PointSet) -> PointSet:
+        """Records of plan shots are what the plan says they are.
+
+        A reading recorded as station P12 takes P12's purpose - `lawn` for a
+        terrain purpose, as `Plan.to_frame` writes it - whatever `type` was
+        picked on the phone, or none. Asking the question twice, once in the
+        office and once in the field, only invites the answers to differ.
+        """
+        from ..model.pointset import KIND
+        from ..plan import is_terrain
+        from ..vertical import stations
+
+        kinds = {f"P{p.number}": "lawn" if is_terrain(p.purpose) else p.purpose
+                 for p in self.plan.points}
+        if not kinds:
+            return ps
+        planned = stations(ps, self.site.mark_names).map(kinds)
+        if planned.isna().all():
+            return ps
+        d = ps.df.copy()
+        d[KIND] = planned.where(planned.notna(),
+                                d[KIND] if KIND in d.columns else None)
+        return ps.with_frame(d, "kind from the plan")
 
     @staticmethod
     def _without_copied_readings(planned: PointSet, records: list[PointSet]
@@ -556,6 +587,9 @@ class AppState:
                                and d[ROD_IN].notna().at[i] else None),
                     "setup": (setups.at[i] if ROD_IN in d.columns
                               and d[ROD_IN].notna().at[i] else ""),
+                    "note": next((str(d[c].at[i]).strip() for c in ("remarks", "notes")
+                                  if c in d.columns and isinstance(d[c].at[i], str)
+                                  and d[c].at[i].strip()), ""),
                     "label": (f"SW Maps {name} record {pid}" if pd.notna(pid)
                               else f"SW Maps {name} record"),
                     "time": (d[TIME].at[i] if TIME in d.columns
@@ -723,7 +757,7 @@ class AppState:
                                         marks=marks)
             except ValueError:
                 return None
-        lawn = KindSelect(names=["lawn"]).apply(spots)
+        lawn = KindSelect(names=list(TERRAIN_KINDS)).apply(spots)
         shots = V.spots_with_laser_elevations(lawn, level, marks)
         if not len(shots):
             return None

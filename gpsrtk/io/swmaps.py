@@ -34,6 +34,7 @@ from ..model.pointset import (
 )
 from .base import (SurveyExport, SurveyReader, register_reader, normalise_kind,
                    numeric, parse_time, rod_readings)
+from .swmaps_field import MARK_FIELD, ROD_FIELD, apply_conventions
 
 # export column -> canonical name
 ALIASES = {
@@ -64,11 +65,16 @@ ALIASES = {
     "type": KIND,
     "station": STATION,
     "notes": "notes",
+    # a field project's (see swmaps_field); `setup` is already canonical
+    ROD_FIELD: ROD_IN,
+    MARK_FIELD: STATION,
 }
 
+# The setup is a label - "A" on a field project, a number on older exports -
+# and stays as read; `vertical.resolve_setups` makes 0 and 0.0 the same.
 NUMERIC_COLS = (E, N, Z, LAT, LON, FIX, HACC, VACC, SPEED, BEARING,
                 PDOP, HDOP, VDOP, SATS_VIEW, SATS_USED, ANT_HT,
-                ROD_IN, SETUP, "ortho_h_m", "point_id")
+                ROD_IN, "ortho_h_m", "point_id")
 
 # Fixed-purpose files. Everything else in the zip is a user-defined layer.
 TRACK_POINTS = "TRACK_POINTS"
@@ -149,6 +155,7 @@ class SWMapsReader(SurveyReader):
                                              history=(f"read {filename}",))
             else:
                 exp.tables[label] = frame
+        exp.notes += apply_conventions(exp.layers)
         return exp
 
     @staticmethod

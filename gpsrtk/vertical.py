@@ -35,6 +35,7 @@ import pandas as pd
 from .model.adjust import Adjustment, LeastSquares
 from .model.pointset import (PointSet, E, N, Z, ELEV, ROD_IN, SETUP, SESSION,
                              STATION, LAT, LON)
+from .plan import TERRAIN_KINDS
 from .units import M_PER_IN, ft_to_m, m_to_ft
 
 NGS_GEOID_URL = "https://geodesy.noaa.gov/api/geoid/ght"
@@ -811,7 +812,7 @@ def solve_vertical(tracks: PointSet, spots: PointSet | None = None, *,
                    geoid: GeoidSeparation | None = None,
                    tied_to_model: bool = False,
                    model_frame: str = "",
-                   lawn_kinds: tuple[str, ...] = ("lawn",),
+                   lawn_kinds: tuple[str, ...] = TERRAIN_KINDS,
                    marks=(), checks=None) -> VerticalModel:
     """Work out the full vertical model from the data available.
 
@@ -837,8 +838,9 @@ def solve_vertical(tracks: PointSet, spots: PointSet | None = None, *,
 
     # Every rod reading is levelling, whatever it was read on: a garage slab
     # or a benchmark nail is exactly what the datum should hang from. Only
-    # terrain shots describe the ground, though, so only they (`lawn`) reach
-    # the tie to the GNSS surface and the session-offset evidence.
+    # terrain shots describe the ground, though, so only they (`lawn`, or a
+    # terrain purpose) reach the tie to the GNSS surface and the
+    # session-offset evidence.
     lawn = None
     if spots is not None and len(spots):
         lawn = KindSelect(names=list(lawn_kinds)).apply(spots)

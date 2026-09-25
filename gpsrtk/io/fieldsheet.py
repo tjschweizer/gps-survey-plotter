@@ -251,8 +251,8 @@ def _control_box(marks) -> str:
         f"(marks: {names})"
         "<ul>"
         "<li>Shoot the mark with the <b>fixed-height pole</b> at the "
-        "<b>start and end of every outing</b>, recorded under the mark's "
-        "name (BM1).</li>"
+        "<b>start and end of every outing</b>, in the field project's "
+        "<b>control checks</b> layer, picking the mark (BM1).</li>"
         "<li>Read the rod on the mark from <b>every laser setup</b>, at the "
         "open and the close.</li>"
         "<li>Set 2-3 marks (mag nails, rebar) outside the mowed area; tie one "
@@ -373,11 +373,12 @@ def write_field_sheet(plan, path: str | Path, *, basemap=None, site=None,
   under 2&nbsp;cm of height per foot of error.
   A <b>float</b> fix is worse than the planned position &mdash; leave it blank.
   <br>
-  <b>Station names in SW Maps</b> &mdash; name each record after the point it
-  was read on: a planned shot as <b>P</b> and its number (<b>P12</b>), a
-  permanent mark by its name (<b>BM1</b>), a turning point by any name you
-  like. The same name means the same physical point. Anything else can keep
-  SW Maps' own ID.
+  <b>In SW Maps</b> &mdash; in the field project (Export &#9656; SW Maps field
+  project), find a shot with Stake Out on the <b>plan</b> layer, then record
+  the reading as a new point in <b>shots</b> and pick its station: a planned
+  shot as <b>P</b> and its number (<b>P12</b>), a permanent mark by its name
+  (<b>BM1</b>), a turning point as <b>TP1</b>. The same station means the same
+  physical point. Pick the setup on the first shot after moving the laser.
 </div>
 
 {_setup_blocks(plan)}

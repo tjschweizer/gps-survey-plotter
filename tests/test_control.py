@@ -25,17 +25,24 @@ POLE_M = 2.0                     # the fixed-height pole
 
 
 def _checks(times, *, pole_dz=0.0, rods=None, setup=0):
-    """Check shots on BM1, 5 m south-west of the lot, at the given times."""
+    """Shots on BM1, 5 m south-west of the lot, at the given times.
+
+    Without `rods` they are check shots, as a field project's `control
+    checks` layer records them: the mark picked from a list. With them they
+    are rod readings on the mark, named after it.
+    """
     e, n = np.full(len(times), ORIGIN_E - 5.0), np.full(len(times), ORIGIN_N - 5.0)
     lat, lon = _latlon(e, n)
     frame = pd.DataFrame({
         "ID": np.arange(901, 901 + len(times)),
-        "Feature Name": "BM1",
         "Time": _stamp(pd.Series(pd.to_datetime(times))),
         "X": e, "Y": n, "Elevation": MARK_GROUND + POLE_M + pole_dz,
         "Latitude": lat, "Longitude": lon, "Fix ID": 4,
     })
-    if rods is not None:
+    if rods is None:
+        frame["mark"] = "BM1"
+    else:
+        frame["Feature Name"] = "BM1"
         frame["height number"] = rods
         frame["base position"] = setup
         frame["type"] = "check"
@@ -49,9 +56,10 @@ def _outing(path, *, day, dz=0.0, de=0.0, seed=0, pole_dz=None, rods=None):
     end = start + pd.Timedelta(seconds=0.3 * len(tracks))
     checks = _checks([start - pd.Timedelta(minutes=10), end + pd.Timedelta(minutes=10)],
                      pole_dz=dz if pole_dz is None else pole_dz, rods=rods)
+    layer = "control checks" if rods is None else "marks"
     with zipfile.ZipFile(path, "w") as z:
         z.writestr(f"{path.stem}_TRACK_POINTS.csv", tracks.to_csv(index=False))
-        z.writestr(f"{path.stem}_marks.csv", checks.to_csv(index=False))
+        z.writestr(f"{path.stem}_{layer}.csv", checks.to_csv(index=False))
     return path
 
 
@@ -125,9 +133,24 @@ def test_a_check_shot_far_from_any_outing_belongs_to_none(fresh, tmp_path):
     path = tmp_path / "Late.zip"
     with zipfile.ZipFile(path, "w") as z:
         z.writestr("Late_TRACK_POINTS.csv", tracks.to_csv(index=False))
-        z.writestr("Late_marks.csv", _checks(["2026-08-27 18:00:00"]).to_csv(index=False))
+        z.writestr("Late_control checks.csv",
+                   _checks(["2026-08-27 18:00:00"]).to_csv(index=False))
     fresh.load(path)
     assert fresh.check_shots().empty
+
+
+def test_only_the_control_checks_layer_holds_check_shots(fresh, tmp_path):
+    """A rod reading on BM1 has its antenna on the rod, not on the fixed-
+    height pole. Counting it as a check put the rod-and-pole difference
+    into the residuals."""
+    path = _outing(tmp_path / "First.zip", day="2026-08-27 13:00:00")
+    rods = _checks(["2026-08-27 12:55:00"], pole_dz=0.3, rods=[50.0])
+    with zipfile.ZipFile(path, "a") as z:
+        z.writestr("First_shots.csv", rods.to_csv(index=False))
+    fresh.load(path)
+    checks = fresh.check_shots()
+    assert len(checks) == 2
+    assert checks["z"].to_numpy() == pytest.approx([MARK_GROUND + POLE_M] * 2)
 
 
 def test_a_rod_reading_on_a_mark_can_hold_the_datum(fresh, tmp_path):

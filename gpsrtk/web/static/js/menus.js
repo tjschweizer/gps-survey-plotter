@@ -80,6 +80,9 @@ function spec(providers) {
         tip: "Slope with arrows pointing downhill, at the plan view's slope scale" },
       { label: "Contour map (PNG)…", run: A.exportContourMap,
         tip: "Shaded relief with contours at the plan view's interval" },
+      "-",
+      { label: "SW Maps field project…", run: A.exportFieldProject,
+        tip: "A project for the next outing: the outstanding shots to stake out, and layers to record readings and check shots in" },
     ] },
     { label: "View", items: [
       { label: "Reset 2D view", run: A.resetView2D },
