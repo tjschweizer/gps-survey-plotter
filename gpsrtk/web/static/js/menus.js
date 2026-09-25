@@ -60,6 +60,8 @@ function spec(providers) {
     { label: "Plan", items: [
       { label: "Add shot", run: () => A.setMode("add_point") },
       { label: "Add line", run: () => A.setMode("add_line") },
+      { label: "Add outline", run: () => A.setMode("add_outline"),
+        tip: "A building, bed, fence, street or the lot; its corners become shots, and a keep-out outline stays out of the surface" },
       { label: "Add laser setup", run: () => A.setMode("add_setup") },
       { label: "Add tie transects", run: A.addTieTransects,
         tip: "Lines through the best-covered ground, to walk or mow first so the next outing overlaps this one" },

@@ -262,6 +262,12 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); margi
 }
 .coverage { font-weight: 600; }
 .detail-result { white-space: pre-wrap; }
+.outline-list { display: flex; flex-direction: column; gap: 4px; }
+.outline { border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px; display: flex; flex-direction: column; gap: 4px; }
+.outline.selected { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--selected); }
+.outline .row { flex-wrap: nowrap; }
+.outline label { display: inline-flex; align-items: center; }
+.outline .summary { color: var(--muted); font-size: 12px; }
 
 /* vertical datum */
 .readout {
@@ -617,6 +623,9 @@ dialog .dlg-buttons a.button {
 .map-legend .mark.plan.control { border-color: var(--pen-control); }
 .map-legend .mark.setup { width: 0; height: 0; border-left: 6px solid transparent; border-right: 6px solid transparent;
                           border-bottom: 11px solid var(--pen-setup); }
+/* The hatching planmap.js fills a keep-out outline with. */
+.map-legend .mark.keepout { border: 2px solid var(--pen-feature);
+  background: repeating-linear-gradient(-45deg, rgba(40, 40, 40, 0.55) 0 1px, rgba(60, 60, 60, 0.12) 1px 4px); }
 .map-legend .note { color: var(--muted); margin-top: 4px; }
 .map-legend .note .arrow { color: var(--arrow); font-weight: 700; }
 

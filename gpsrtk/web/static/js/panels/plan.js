@@ -11,10 +11,15 @@
 //
 // The rules about what an edit means live on the server; a refused edit comes
 // back as a dialog and the cell goes back to what it was.
+//
+// Outlines are listed under the table: their corners are rows like any other
+// shot, and what an outline is - its name, its kind, whether its inside is
+// kept out of the surface - is edited in its own entry.
 
 import { h, clear } from "../dom.js";
 import { store, subscribe, changed, planMode, setPlanMode, onPlanMode,
-         selection, setSelection, onSelection, requests } from "../store.js";
+         selection, setSelection, onSelection, requests, selectedOutline,
+         setSelectedOutline, onOutlineSelection, outlineKind, setOutlineKind } from "../store.js";
 import { act } from "../api.js";
 import { writeFieldSheet } from "../actions.js";
 
@@ -29,6 +34,8 @@ const plan = () => store.state?.plan;
 const TOOLS = [
   ["+ Point", "add_point", "Click on the map to place a shot"],
   ["+ Line", "add_line", "Click vertices; double-click to finish"],
+  ["+ Outline", "add_outline",
+   "A building, bed, fence or the lot: click each corner; double-click the last to close it"],
   ["+ Laser", "add_setup", "Where the laser will stand"],
   ["Navigate", "navigate", "Pan, zoom and drag markers. Esc returns here."],
 ];
@@ -280,6 +287,92 @@ function showDetail() {
 
 onSelection(() => showDetail());
 
+// --- outlines ------------------------------------------------------------------
+
+const BUSY = { busy: "Rebuilding the surface…" };
+const newKind = h("select", { "aria-label": "kind of outline + Outline draws",
+                              onchange: () => setOutlineKind(newKind.value) });
+const outlineList = h("div", { class: "outline-list" });
+const outlinesGroup = h("div", { class: "group", id: "plan-outlines" },
+  h("div", { class: "legend" }, "Outlines"),
+  h("label", { class: "row" }, "+ Outline draws a", newKind),
+  outlineList);
+
+let kindsFor = null;
+let outlinesFor = null;
+
+function outlineEntry(o, kinds) {
+  // A refused edit puts the entry back as it was; an accepted one may have
+  // renamed the outline (a new kind renames "building-1"), so the picked
+  // one follows it.
+  const edit = async (change) => {
+    const reply = await act("/api/plan/outline/edit", { line_id: o.line_id, ...change }, BUSY);
+    if (reply?.outline) setSelectedOutline(reply.outline);
+    else renderOutlines(plan(), true);
+  };
+  const name = h("input", { type: "text", value: o.line_id, spellcheck: false,
+                            "aria-label": "outline name", class: "grow" });
+  name.addEventListener("change", () => edit({ name: name.value }));
+  const kind = h("select", { "aria-label": `what ${o.line_id} is` },
+    kinds.map((k) => h("option", { value: k.kind }, k.kind)));
+  kind.value = o.kind;
+  kind.addEventListener("change", () => edit({ kind: kind.value }));
+  const keepOut = h("input", { type: "checkbox", checked: o.keep_out, disabled: !o.closed,
+                               "aria-label": `keep ${o.line_id} out of the surface` });
+  keepOut.addEventListener("change", () => edit({ keep_out: keepOut.checked }));
+  const closed = h("input", { type: "checkbox", checked: o.closed, "aria-label": `${o.line_id} is closed` });
+  closed.addEventListener("change", () => edit({ closed: closed.checked }));
+  const remove = h("button", {
+    class: "icon", title: `Delete ${o.line_id} and its corners`, "aria-label": `Delete ${o.line_id}`,
+    onclick: () => act("/api/plan/outline/delete", { line_id: o.line_id }, BUSY),
+  }, "✕");
+  return h("div", {
+    class: "outline", dataset: { line: o.line_id },
+    onclick: () => setSelectedOutline(o.line_id),
+  },
+    h("div", { class: "row" }, name, kind, remove),
+    h("div", { class: "row" },
+      h("label", { title: "Leave the ground inside out of the surface, its exports and tie transects" },
+        keepOut, "keep-out"),
+      h("label", { title: "Untick for a run with no inside, such as a fence along one side" },
+        closed, "closed")),
+    h("div", { class: "summary" }, o.summary));
+}
+
+function renderOutlines(p, force = false) {
+  const kinds = p.outline_kinds ?? [];
+  const kindsKey = JSON.stringify(kinds);
+  if (kindsKey !== kindsFor) {
+    kindsFor = kindsKey;
+    clear(newKind).append(...kinds.map((k) => h("option", { value: k.kind },
+      k.kind + (k.keep_out ? " (keep-out)" : ""))));
+    newKind.value = outlineKind();
+  }
+  const key = JSON.stringify(p.outlines ?? []);
+  if (key === outlinesFor && !force) return;
+  outlinesFor = key;
+  const list = p.outlines ?? [];
+  clear(outlineList).append(...(list.length
+    ? list.map((o) => outlineEntry(o, kinds))
+    : [h("div", { class: "muted" },
+        "None yet. + Outline, then click each corner of a building, a bed, a fence or the lot; "
+        + "its corners become numbered shots to locate.")]));
+  markPicked();
+}
+
+// Picking only restyles the entries. Rebuilding them would pull an input or
+// a list out from under the click that picked it.
+function markPicked() {
+  for (const el of outlineList.querySelectorAll(".outline")) {
+    el.classList.toggle("selected", el.dataset.line === selectedOutline());
+  }
+}
+
+onOutlineSelection(() => {
+  markPicked();
+  outlineList.querySelector(".outline.selected")?.scrollIntoView({ block: "nearest" });
+});
+
 // --- editing ------------------------------------------------------------------
 
 async function deleteSelected() {
@@ -291,7 +384,7 @@ async function deleteSelected() {
 
 const coverage = h("div", { class: "coverage" });
 const insertButton = h("button", {
-  title: "Add a vertex after the selected one, halfway to the next",
+  title: "Add a vertex (or an outline corner) after the selected one, halfway to the next",
   onclick: async () => {
     const number = currentNumber();
     if (number == null) return;
@@ -304,10 +397,18 @@ const deleteButton = h("button", { onclick: deleteSelected, disabled: true }, "D
 clear(body).append(
   tools, tableEl, detail, coverage,
   h("div", { class: "row" }, insertButton, deleteButton,
-    h("button", { onclick: writeFieldSheet }, "Field sheet…")));
+    h("button", { onclick: writeFieldSheet }, "Field sheet…")),
+  outlinesGroup);
 showDetail();
 
 subscribe((state, prev) => {
-  if (changed(state, prev, "plan", "site")) load(state.plan);
+  if (changed(state, prev, "plan", "site")) {
+    load(state.plan);
+    // An outline that has gone (deleted, or renamed) is no longer picked.
+    if (!(state.plan.outlines ?? []).some((o) => o.line_id === selectedOutline())) {
+      setSelectedOutline(null);
+    }
+    renderOutlines(state.plan);
+  }
   coverage.textContent = state.plan.coverage;
 });

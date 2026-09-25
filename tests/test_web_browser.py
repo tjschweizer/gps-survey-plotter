@@ -264,6 +264,103 @@ def test_the_laser_tool_places_one_setup_and_goes_back_to_navigate(page, live):
     assert pressed(page) == "Navigate"
 
 
+# --- outlines --------------------------------------------------------------------------------
+
+def draw_outline(page, *corners):
+    """Click each corner with the outline tool; double-click the last."""
+    tool(page, "add_outline")
+    for corner in corners[:-1]:
+        page.mouse.click(*to_screen(page, *corner))
+    page.mouse.dblclick(*to_screen(page, *corners[-1]))
+    page.wait_for_timeout(800)
+
+
+def seed_outline(live, page, kind="building", box=(10.0, 10.0, 20.0, 18.0)):
+    """An outline over local metres, placed from Python, then shown."""
+    from gpsrtk.app import plan_edit as PE
+
+    x0, y0, x1, y1 = box
+    corners = [live.state.site.to_projected(x, y)
+               for x, y in ((x0, y0), (x1, y0), (x1, y1), (x0, y1))]
+    with live.server.acting():
+        PE.add_outline(live.state.plan, corners, kind)
+        live.state.plan_changed()
+    page.evaluate("() => window.yardsurvey.refresh()")
+    page.wait_for_timeout(300)
+
+
+def outline_entry(page, name):
+    return page.locator(f"#plan-outlines .outline[data-line='{name}']")
+
+
+def test_the_outline_tool_draws_a_keep_out_building(page, live):
+    draw_outline(page, (10.0, 10.0), (20.0, 10.0), (20.0, 18.0), (10.0, 18.0))
+    [house] = live.state.plan.lines
+    assert (house.kind, house.closed, house.keep_out) == ("building", True, True)
+    assert len(house.numbers) == 4
+    assert live.state.kept_out > 0, "its inside left the surface"
+    entry = outline_entry(page, "building-1")
+    assert "4 corners, 0 located" in entry.inner_text()
+    assert "selected" in entry.get_attribute("class"), "the new outline is picked"
+    assert page.locator(".map-legend .mark.keepout").count() == 1
+    assert page.locator("#plan-table .tabulator-row").count() == 4, "its corners are shots"
+    assert pressed(page) == "+ Outline", "the tool stays down for the next one"
+
+
+def test_the_kind_is_chosen_before_drawing(page, live):
+    page.select_option("#plan-outlines > label select", "fence")
+    draw_outline(page, (5.0, 5.0), (35.0, 5.0), (35.0, 25.0))
+    [fence] = live.state.plan.lines
+    assert (fence.line_id, fence.kind, fence.keep_out) == ("fence-1", "fence", False)
+    assert live.state.kept_out == 0
+
+
+def test_escape_drops_an_outline_in_progress(page, live):
+    tool(page, "add_outline")
+    for corner in ((5.0, 5.0), (15.0, 5.0), (15.0, 12.0)):
+        page.mouse.click(*to_screen(page, *corner))
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(300)
+    assert pressed(page) == "Navigate"
+    assert live.state.plan.lines == []
+
+
+def test_an_outline_is_edited_from_its_entry(page, live):
+    seed_outline(live, page)
+    outline_entry(page, "building-1").locator("select").select_option("landscaping")
+    page.wait_for_timeout(500)
+    entry = outline_entry(page, "landscaping-1")
+    assert "selected" in entry.get_attribute("class"), "the renamed outline stays picked"
+    entry.locator("input[type=checkbox]").first.click()          # keep-out
+    page.wait_for_timeout(500)
+    assert live.state.plan.lines[0].keep_out is False
+    name = outline_entry(page, "landscaping-1").locator("input[type=text]")
+    name.fill("front bed")
+    name.press("Enter")
+    page.wait_for_timeout(500)
+    assert live.state.plan.lines[0].line_id == "front bed"
+    assert row_cell(page, 1, "line").inner_text() == "front bed"
+
+
+def test_clicking_an_outline_picks_its_entry(page, live):
+    seed_outline(live, page)
+    page.mouse.click(*to_screen(page, 15.0, 13.0))        # inside, off every corner
+    page.wait_for_timeout(300)
+    assert "selected" in outline_entry(page, "building-1").get_attribute("class")
+    page.mouse.click(*to_screen(page, 32.0, 25.0))        # open ground
+    page.wait_for_timeout(300)
+    assert "selected" not in outline_entry(page, "building-1").get_attribute("class")
+
+
+def test_deleting_an_outline_asks_first(page, live):
+    seed_outline(live, page, kind="shed")
+    outline_entry(page, "shed-1").locator("button").click()
+    page.locator("dialog[open] button:has-text('Yes')").click()
+    page.wait_for_timeout(500)
+    assert live.state.plan.lines == [] and live.state.plan.points == []
+    assert page.locator("#plan-outlines .outline").count() == 0
+
+
 # --- markers ----------------------------------------------------------------------------------
 
 def test_dragging_a_marker_moves_its_planned_position(page, live):

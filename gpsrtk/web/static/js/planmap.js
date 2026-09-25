@@ -10,10 +10,16 @@
 // faint leader runs back to the original click: that gap is the error in the
 // plan, and where the plan was clicked off an aerial it is also a direct
 // reading of how far that aerial is out.
+//
+// An outline - a building, a bed, a fence, the lot - is drawn from the same
+// markers: its corners are shots, and dragging or measuring one moves the
+// outline. A keep-out outline is hatched, because its inside is ground the
+// surface leaves out.
 
 import { map } from "./map2d.js";
 import { store, subscribe, changed, planMode, setPlanMode, onPlanMode,
-         onSelection, requests } from "./store.js";
+         onSelection, requests, selectedOutline, setSelectedOutline,
+         onOutlineSelection, outlineKind } from "./store.js";
 import { act } from "./api.js";
 
 // Coloured by purpose GROUP: terrain, built feature, or control. Individual
@@ -56,6 +62,59 @@ function transectStyle(f) {
     }),
   });
 }
+
+// Diagonal hatching over a light grey tint: "not ground we surface", legible
+// over both an aerial and the shaded surface, and unlike any data colour.
+const HATCH = (() => {
+  const c = document.createElement("canvas");
+  c.width = c.height = 8;
+  const g = c.getContext("2d");
+  g.fillStyle = "rgba(60,60,60,0.12)";
+  g.fillRect(0, 0, 8, 8);
+  g.strokeStyle = "rgba(40,40,40,0.55)";
+  g.lineWidth = 1.2;
+  g.beginPath();
+  g.moveTo(0, 8); g.lineTo(8, 0);
+  g.moveTo(-2, 2); g.lineTo(2, -2);
+  g.moveTo(6, 10); g.lineTo(10, 6);
+  g.stroke();
+  return g.createPattern(c, "repeat");
+})();
+// A property line is control and dashed like a surveyor's boundary; a fence
+// is dotted; everything else is a built feature's solid outline.
+const OUTLINE_DASH = { "property line": [12, 4, 2, 4], fence: [2, 4] };
+
+const outlineSource = new ol.source.Vector();
+const outlineStyles = new Map();
+function outlineStyle(f) {
+  const kind = f.get("kind");
+  const chosen = f.get("line_id") === selectedOutline();
+  const keepOut = f.get("keep_out");
+  const key = `${kind}|${keepOut}|${chosen}|${f.get("line_id")}`;
+  let style = outlineStyles.get(key);
+  if (style) return style;
+  const pen = chosen ? SELECTED : kind === "property line" ? GROUP_PEN.control : GROUP_PEN.feature;
+  style = new ol.style.Style({
+    stroke: new ol.style.Stroke({ color: rgba(pen), width: chosen ? 3.5 : 2.2,
+                                  lineDash: OUTLINE_DASH[kind] }),
+    fill: keepOut ? new ol.style.Fill({ color: HATCH }) : undefined,
+    // A hatched area is named in its middle; anything else along its edge,
+    // since the middle of the lot's outline is where everything else is.
+    text: new ol.style.Text({
+      text: f.get("line_id") + (keepOut ? " (keep-out)" : ""),
+      placement: keepOut ? "point" : "line", textBaseline: keepOut ? "middle" : "bottom",
+      font: "600 12px system-ui, sans-serif", overflow: true,
+      fill: new ol.style.Fill({ color: "#111" }),
+      stroke: new ol.style.Stroke({ color: "rgba(255,255,255,0.9)", width: 3 }),
+    }),
+  });
+  outlineStyles.set(key, style);
+  return style;
+}
+const outlineLayer = new ol.layer.Vector({
+  source: outlineSource, zIndex: 135, style: outlineStyle, updateWhileInteracting: true,
+});
+map.addLayer(outlineLayer);
 
 const setupSource = new ol.source.Vector();
 map.addLayer(new ol.layer.Vector({
@@ -122,9 +181,16 @@ function rebuild(plan) {
     number: p.number, locked: p.locked, group: p.group, tooltip: p.tooltip,
   })));
   lineSource.clear(true);
-  lineSource.addFeatures(plan.lines.filter((ln) => ln.xy.length > 1).map((ln) => new ol.Feature({
+  lineSource.addFeatures(plan.lines.filter((ln) => !ln.outline && ln.xy.length > 1).map((ln) => new ol.Feature({
     geometry: new ol.geom.LineString(ln.xy), line_id: ln.line_id, numbers: ln.numbers,
     closed: ln.closed, kind: ln.kind,
+  })));
+  outlineSource.clear(true);
+  outlineSource.addFeatures(plan.lines.filter((ln) => ln.outline && ln.xy.length > 1).map((ln) => new ol.Feature({
+    // The closing corner is repeated, so a closed outline with an inside
+    // has at least four coordinates.
+    geometry: ln.closed && ln.xy.length > 3 ? new ol.geom.Polygon([ln.xy]) : new ol.geom.LineString(ln.xy),
+    line_id: ln.line_id, numbers: ln.numbers, closed: ln.closed, kind: ln.kind, keep_out: ln.keep_out,
   })));
   setupSource.clear(true);
   setupSource.addFeatures(plan.setups.map((s) => new ol.Feature({
@@ -147,9 +213,16 @@ onSelection((numbers) => {
   markerLayer.changed();
 });
 
+onOutlineSelection(() => outlineLayer.changed());
+
 export function markerAt(pixel) {
   return map.forEachFeatureAtPixel(pixel, (f) => f,
     { layerFilter: (layer) => layer === markerLayer, hitTolerance: 4 }) ?? null;
+}
+
+function outlineAt(pixel) {
+  return map.forEachFeatureAtPixel(pixel, (f) => f,
+    { layerFilter: (layer) => layer === outlineLayer, hitTolerance: 4 }) ?? null;
 }
 
 // --- dragging a planned mark -----------------------------------------------------------
@@ -169,19 +242,21 @@ translate.on("translatestart", (e) => {
   dragStart = f ? f.getGeometry().getCoordinates().slice() : null;
 });
 translate.on("translating", (e) => {
-  // Keep the break lines attached while the vertex moves.
+  // Keep the break lines and outlines attached while the vertex moves.
   const f = e.features.item(0);
   if (!f) return;
   const number = f.get("number");
   const [x, y] = f.getGeometry().getCoordinates();
-  for (const line of lineSource.getFeatures()) {
+  for (const line of [...lineSource.getFeatures(), ...outlineSource.getFeatures()]) {
     const numbers = line.get("numbers");
     if (!numbers.includes(number)) continue;
-    const coords = line.getGeometry().getCoordinates();
+    const geometry = line.getGeometry();
+    const polygon = geometry instanceof ol.geom.Polygon;
+    const coords = polygon ? geometry.getCoordinates()[0] : geometry.getCoordinates();
     const drawn = numbers.filter((n) => store.state.plan.points.some((p) => p.number === n));
     drawn.forEach((n, i) => { if (n === number) coords[i] = [x, y]; });
     if (line.get("closed") && coords.length > drawn.length) coords[coords.length - 1] = coords[0];
-    line.getGeometry().setCoordinates(coords);
+    geometry.setCoordinates(polygon ? [coords] : coords);
   }
 });
 translate.on("translateend", async (e) => {
@@ -212,17 +287,40 @@ draw.on("drawend", (e) => {
   act("/api/plan/line/add", { vertices });
 });
 
+// An outline closes itself: double-click the last corner, and the side back
+// to the first is drawn.
+const outlineDraw = new ol.interaction.Draw({
+  type: "Polygon",
+  style: new ol.style.Style({
+    stroke: new ol.style.Stroke({ color: rgba(SELECTED), width: 2, lineDash: [6, 4] }),
+    fill: new ol.style.Fill({ color: rgba(SELECTED, 0.12) }),
+    image: new ol.style.Circle({ radius: 4, fill: new ol.style.Fill({ color: rgba(SELECTED) }) }),
+  }),
+});
+outlineDraw.on("drawend", async (e) => {
+  const vertices = e.feature.getGeometry().getCoordinates()[0];
+  // The server ignores fewer than three corners: that is not an area.
+  const reply = await act("/api/plan/outline/add", { vertices, kind: outlineKind() },
+                          { busy: "Rebuilding the surface…" });
+  if (reply?.outline) setSelectedOutline(reply.outline);
+});
+
+const DRAWS = { add_line: draw, add_outline: outlineDraw };
+
+/** Drop whatever line or outline is being drawn. */
 export function cancelLine() {
   draw.abortDrawing();
+  outlineDraw.abortDrawing();
 }
 
 onPlanMode((mode, previous) => {
-  if (previous === "add_line") {
-    // Leaving the tool commits what was drawn, as long as it is a line.
-    draw.finishDrawing();
-    map.removeInteraction(draw);
+  if (DRAWS[previous]) {
+    // Leaving the tool commits what was drawn, as long as it is a line (or
+    // an outline with an inside).
+    DRAWS[previous].finishDrawing();
+    map.removeInteraction(DRAWS[previous]);
   }
-  if (mode === "add_line") map.addInteraction(draw);
+  if (DRAWS[mode]) map.addInteraction(DRAWS[mode]);
   translate.setActive(mode === "navigate");
   map.getTargetElement().classList.toggle("placing", mode !== "navigate");
   hideTip();
@@ -234,7 +332,13 @@ map.on("click", async (e) => {
   const mode = planMode();
   if (mode === "navigate") {
     const hit = markerAt(e.pixel);
-    if (hit) requests.select(hit.get("number"));
+    if (hit) {
+      requests.select(hit.get("number"));
+      return;
+    }
+    // Off every marker, a click on an outline picks it in the outline list;
+    // a click on open ground puts the picked one down.
+    setSelectedOutline(outlineAt(e.pixel)?.get("line_id") ?? null);
     return;
   }
   const [x, y] = e.coordinate;

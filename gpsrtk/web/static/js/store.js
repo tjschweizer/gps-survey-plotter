@@ -1,5 +1,6 @@
 // The latest snapshot from the server, plus the few things that exist only in
-// the browser: the plan drawing tool and which plan rows are selected.
+// the browser: the plan drawing tool, which plan rows are selected, which
+// outline is, and what kind of outline the next one drawn will be.
 //
 // Every panel subscribes and redraws itself from the snapshot. Heavy views
 // compare revision counters (`changed`) to decide whether their data moved.
@@ -27,9 +28,10 @@ export function changed(state, prev, ...topics) {
 
 // --- browser-only state -----------------------------------------------------
 
-const ui = { mode: "navigate", selection: [] };
+const ui = { mode: "navigate", selection: [], outline: null, outlineKind: "building" };
 const modeListeners = [];
 const selectionListeners = [];
+const outlineListeners = [];
 
 export function planMode() { return ui.mode; }
 
@@ -54,6 +56,22 @@ export function setSelection(numbers) {
 }
 
 export function onSelection(fn) { selectionListeners.push(fn); }
+
+// One outline at a time: picked in the list or clicked on the map, drawn
+// highlighted on the map.
+export function selectedOutline() { return ui.outline; }
+
+export function setSelectedOutline(id) {
+  const next = id ?? null;
+  if (next === ui.outline) return;
+  ui.outline = next;
+  for (const fn of outlineListeners) fn(next);
+}
+
+export function onOutlineSelection(fn) { outlineListeners.push(fn); }
+
+export function outlineKind() { return ui.outlineKind; }
+export function setOutlineKind(kind) { ui.outlineKind = kind; }
 
 // Hooks one module offers another without importing it. The plan table sets
 // `select`; the map calls it when a marker is clicked.

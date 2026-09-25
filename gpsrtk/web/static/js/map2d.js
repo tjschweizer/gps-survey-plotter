@@ -403,17 +403,19 @@ const KEY = [
   ["plan feature", "plan shot: built feature"],
   ["plan control", "plan shot: control"],
   ["setup", "laser setup"],
+  ["keepout", "keep-out outline: not surfaced"],
 ];
 
 function syncLegend(state) {
   const t = state.terrain;
   const showSurface = controls.surface.checked && t;
-  const plan = state.plan ?? { points: [], setups: [] };
+  const plan = state.plan ?? { points: [], setups: [], lines: [] };
   const groups = new Set(plan.points.filter((p) => !p.guide).map((p) => p.group));
   const keys = KEY.filter(([k]) =>
     (k === "spot" && markerSource.getFeatures().length) ||
     (k.startsWith("plan ") && groups.has(k.slice(5))) ||
-    (k === "setup" && plan.setups.length));
+    (k === "setup" && plan.setups.length) ||
+    (k === "keepout" && (plan.lines ?? []).some((ln) => ln.keep_out)));
   legend.hidden = !(showSurface || keys.length
                     || (t && (controls.contours.checked || controls.drainage.checked)));
   byId("slope-max-label").hidden = controls.mode.value !== "slope";
