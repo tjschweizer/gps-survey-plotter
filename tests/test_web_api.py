@@ -916,3 +916,16 @@ def test_opened_files_are_remembered_for_the_start_panel(tmp_path, synthetic_zip
     (tmp_path / "x11.zip").unlink()               # gone from disk: not listed
     names = [r["name"] for r in files.recent_files(cache)]
     assert len(names) == 7 and names[0] == "x10.zip"
+
+
+def test_the_do_nothing_residual_stage_is_not_offered(client, state):
+    """Nothing sets its reference surface, so it keeps every point."""
+    from gpsrtk.filters import FilterChain
+
+    kinds = [k["kind"] for k in client.get("/api/state").json()["chain"]["kinds"]]
+    assert "surface_residual" not in kinds and "fix_select" in kinds
+    # A saved chain that uses it still loads, and still runs.
+    chain = FilterChain.from_list(state.chain.to_list()
+                                  + [{"kind": "surface_residual", "enabled": True}])
+    assert chain.stages[-1].kind == "surface_residual"
+    assert len(chain.run(state.source)) > 0

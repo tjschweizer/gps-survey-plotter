@@ -35,6 +35,11 @@ PLAIN_NAMES = {
     "surface_residual": "Distance from a reference surface",
 }
 
+# Registered, so a saved chain that uses them still loads, but not offered:
+# nothing ever sets the surface-residual stage's reference surface, so it
+# passes every point through and would only look as if it filtered.
+HIDDEN_KINDS = frozenset({"surface_residual"})
+
 # The fix filter's values as the two choices anyone means by them, instead
 # of the text "[4]".
 FIX_CHOICES = (("fixed", FIX_RTK), ("float", FIX_FLOAT))
@@ -100,7 +105,8 @@ def chain_payload(chain: FilterChain) -> dict:
         head, tail = results[0].n_in, results[-1].n_out
         pct = tail / head * 100 if head else 0
         total = f"{head:,} → {tail:,} points  ({pct:.1f}% kept)"
-    kinds = [{"kind": k, "name": PLAIN_NAMES.get(k, k)} for k in REGISTRY]
+    kinds = [{"kind": k, "name": PLAIN_NAMES.get(k, k)} for k in REGISTRY
+             if k not in HIDDEN_KINDS]
     return {"stages": stages, "total": total,
             "kinds": sorted(kinds, key=lambda k: k["name"].lower())}
 

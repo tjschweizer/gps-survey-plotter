@@ -219,8 +219,8 @@ These answers change the designs in section 5.
 | 37 | C24 | Surface smoothing sized in metres | processing | ✅ `116824f` |
 | 38 | C26 | .gitignore covers exports | code health | ✅ `757b32b` |
 | 39 | C27 | Atomic saves | code health | ✅ `aedcc88` |
-| 40 | C28 | Server hardening | code health | ✅ |
-| 41 | C30 | Hide the do-nothing surface-residual stage | code health | todo |
+| 40 | C28 | Server hardening | code health | ✅ `ef50afd` |
+| 41 | C30 | Hide the do-nothing surface-residual stage | code health | ✅ |
 | 42 | C31 | Network tests stay off under any `-m` | code health | todo |
 | 43 | C32 | CLAUDE.md: rover is PX4, plus the A9 note | docs | todo |
 | — | A9 | Rover mission export | workflow | **deferred** (section 7) |
@@ -1321,7 +1321,11 @@ Evidence for these is in the review screenshots: synthetic export,
   and the browser tests.
 - **Breaking?:** no.
 
-**C30 — Hide the do-nothing surface-residual stage**
+**C30 — Hide the do-nothing surface-residual stage** ✅
+- **Done:** `chain_edit.HIDDEN_KINDS = {"surface_residual"}` keeps it out of
+  `chain_payload["kinds"]` only; it stays registered, so saved chains using
+  it load and run. Test:
+  `test_web_api.py::test_the_do_nothing_residual_stage_is_not_offered`.
 - **What:** remove `surface_residual` from the Add list only
   (`chain_edit.chain_payload` `kinds`). Saved chains that use it still load.
 - **Why:** nothing ever calls `set_reference`, so the stage does nothing
