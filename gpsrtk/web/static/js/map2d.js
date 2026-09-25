@@ -313,6 +313,7 @@ async function syncFeatures(state) {
   })));
   vectorSource.clear(true);
   vectorSource.addFeatures(vectors.map((v) => new ol.Feature(new ol.geom.LineString(v.xy))));
+  syncLegend(store.state);          // its key lists the spot squares now drawn
 }
 
 function slopeMax() {
@@ -359,43 +360,92 @@ async function syncDrainage(state) {
 
 // --- the legend ---------------------------------------------------------------
 
-const legend = h("div", { class: "map-legend", "aria-live": "polite" });
+// Collapsible, and the home view is framed with room for it (`resetView`),
+// so at 1280 px it no longer sits on the survey. Where the map is narrow it
+// starts folded to its title.
+const NARROW_MAP_PX = 700;
+const legendBody = h("div", { class: "legend-body" });
+const legendToggle = h("button", {
+  type: "button", class: "legend-toggle", "aria-expanded": "true", title: "Fold the legend",
+  onclick: () => setLegendOpen(legendBody.hidden, true),
+});
+const legendHead = h("div", { class: "legend-head" }, h("span", { class: "legend-name" }), legendToggle);
+const legend = h("div", { class: "map-legend", "aria-live": "polite" }, legendHead, legendBody);
 map.addControl(new ol.control.Control({ element: legend }));
+
+function setLegendOpen(open, byUser = false) {
+  legendBody.hidden = !open;
+  legendToggle.setAttribute("aria-expanded", String(open));
+  legendToggle.textContent = open ? "▾" : "▸";
+  legendToggle.title = open ? "Fold the legend" : "Show the legend";
+  if (byUser) remember("legend-open", open);
+}
+setLegendOpen(recall("legend-open", byId("map").clientWidth >= NARROW_MAP_PX || !byId("map").clientWidth));
 
 function gradient(stops) {
   return `linear-gradient(to right, ${stops.map(([t, c]) => `${c} ${(t * 100).toFixed(1)}%`).join(", ")})`;
 }
 
+/** Five labels under a colour bar, at its ends and quarters. */
+function ticks(lo, hi, format, last = format) {
+  return h("div", { class: "ticks" },
+    [0, 1, 2, 3, 4].map((i) => h("span", {}, (i === 4 ? last : format)(lo + ((hi - lo) * i) / 4))));
+}
+
+// What the map's marker shapes are. Colour on a plan shot is its purpose
+// group, as in the shot-plan table.
+const KEY = [
+  ["spot", "SW Maps shot (station on zoom)"],
+  ["plan terrain", "plan shot: terrain"],
+  ["plan feature", "plan shot: built feature"],
+  ["plan control", "plan shot: control"],
+  ["setup", "laser setup"],
+];
+
 function syncLegend(state) {
   const t = state.terrain;
   const showSurface = controls.surface.checked && t;
-  legend.hidden = !(showSurface || (t && (controls.contours.checked || controls.drainage.checked)));
+  const plan = state.plan ?? { points: [], setups: [] };
+  const groups = new Set(plan.points.filter((p) => !p.guide).map((p) => p.group));
+  const keys = KEY.filter(([k]) =>
+    (k === "spot" && markerSource.getFeatures().length) ||
+    (k.startsWith("plan ") && groups.has(k.slice(5))) ||
+    (k === "setup" && plan.setups.length));
+  legend.hidden = !(showSurface || keys.length
+                    || (t && (controls.contours.checked || controls.drainage.checked)));
   byId("slope-max-label").hidden = controls.mode.value !== "slope";
   if (legend.hidden) return;
-  clear(legend);
+  clear(legendBody);
+  let name = "Legend";
   if (showSurface) {
     if (controls.mode.value === "slope") {
-      legend.append(
-        h("div", { class: "legend-title" }, "Slope (%)"),
+      name = "Slope (%)";
+      const max = slopeMax();
+      legendBody.append(
         h("div", { class: "bar", style: { background: gradient(state.scales.magma_r) } }),
-        h("div", { class: "ends" }, h("span", {}, "0"), h("span", {}, `≥ ${slopeMax()}`)),
+        ticks(0, max, (v) => v.toFixed(v < 10 && max < 20 ? 1 : 0), () => `≥ ${max}`),
         h("div", { class: "note" },
           `median ${t.slope.median?.toFixed(1) ?? "–"}%, p90 ${t.slope.p90?.toFixed(1) ?? "–"}%`));
     } else {
       const e = t.elevation;
-      legend.append(
-        h("div", { class: "legend-title" }, `Elevation (ft, ${e.datum})`),
+      name = `Elevation (ft, ${e.datum})`;
+      legendBody.append(
         h("div", { class: "bar", style: { background: gradient(state.scales[controls.cmap.value]) } }),
-        h("div", { class: "ends" }, h("span", {}, e.lo_ft.toFixed(2)), h("span", {}, e.hi_ft.toFixed(2))),
+        ticks(e.lo_ft, e.hi_ft, (v) => v.toFixed(2)),
         h("div", { class: "note" }, `${t.relief_cm.toFixed(0)} cm relief · ${Math.round(t.mapped_m2).toLocaleString()} m² mapped`));
     }
   }
-  if (controls.contours.checked) {
-    legend.append(h("div", { class: "note" },
+  legendHead.querySelector(".legend-name").textContent = name;
+  if (controls.contours.checked && t) {
+    legendBody.append(h("div", { class: "note" },
       `contours every ${controls.interval.value} cm, labelled in cm above the lowest point`));
   }
-  if (controls.drainage.checked) {
-    legend.append(h("div", { class: "note" }, h("span", { class: "arrow" }, "➜ "), "points downhill"));
+  if (controls.drainage.checked && t) {
+    legendBody.append(h("div", { class: "note" }, h("span", { class: "arrow" }, "➜ "), "points downhill"));
+  }
+  if (keys.length) {
+    legendBody.append(h("div", { class: "key" },
+      keys.map(([k, text]) => h("div", {}, h("span", { class: `mark ${k}` }), text))));
   }
 }
 
@@ -416,7 +466,13 @@ function syncInfo(state) {
  */
 export function resetView() {
   const home = store.state?.home;
-  if (home) map.getView().fit(home, { size: map.getSize() });
+  if (!home) return;
+  // Leave the legend its own margin, so it frames the survey rather than
+  // covering it.
+  const room = legend.hidden ? 0 : legend.offsetWidth + 16;
+  const size = map.getSize();
+  const right = size && size[0] - room > 200 ? room : 0;
+  map.getView().fit(home, { size, padding: [8, right, 8, 8] });
 }
 
 export function redraw(state = store.state) {

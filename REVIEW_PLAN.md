@@ -114,6 +114,7 @@ These were set by the owner and apply to every item.
 | After C14 | 418 passed, 51 skipped, 45 deselected | 40 passed (twice) |
 | After C15 | 419 passed, 51 skipped, 46 deselected | 41 passed |
 | After C16 | 420 passed, 51 skipped, 47 deselected | 42 passed |
+| After C17 | 420 passed, 51 skipped, 49 deselected | 44 passed |
 
 Of the 55 skips, 50 need real data. The other 5 are network tests that the
 sandbox proxy refused.
@@ -192,8 +193,8 @@ These answers change the designs in section 5.
 | 23 | C13 | Status strip above the map | UI | ✅ `57efec7`, fix `1a623b9` |
 | 24 | C14 | Points drawn under the surface's weight | UI | ✅ `2b7d33e` |
 | 25 | C15 | Success reports stop being modal | UI | ✅ `67b579a` |
-| 26 | C16 | Consistent units in 2D, 3D and layers | UI | ✅ |
-| 27 | C17 | Legend: ticks, marker key, no overlap | UI | todo |
+| 26 | C16 | Consistent units in 2D, 3D and layers | UI | ✅ `4eec96e` |
+| 27 | C17 | Legend: ticks, marker key, no overlap | UI | ✅ |
 | 28 | C18 | Contrast, colour tokens, type and spacing scale | UI | todo |
 | 29 | C19 | Rod column second, in the table and the field sheet | UI | todo |
 | 30 | C20 | Readable filter stack | UI | todo |
@@ -1041,7 +1042,17 @@ Evidence for these is in the review screenshots: synthetic export,
 - **Verify:** payload test.
 - **Breaking?:** no.
 
-**C17 — Legend**
+**C17 — Legend** ✅
+- **Done:** `map2d.js` legend: a head (title with units and datum, and a
+  fold toggle remembered as `legend-open`), five tick labels under the bar
+  (slope: 0 ... "≥ max"), the existing notes, and a key of the marker
+  shapes actually on the map (red square = SW Maps shot, ring by purpose
+  group = plan shot, orange triangle = laser setup). It starts folded where
+  the map is under 700 px wide (1280 px windows), and `resetView` frames
+  the survey with a right margin the width of the legend, so it no longer
+  sits on the data. It now takes pointer events (for the toggle). Tests:
+  `test_web_browser.py::test_the_legend_has_ticks_a_key_and_folds`,
+  `::test_at_1280_the_legend_keeps_off_the_survey`.
 - **What:** 5 tick labels, units and datum, a key for marker shapes (squares
   are SW Maps shots, circles are plan shots by group, the triangle is a laser
   setup). It is collapsible and moves off the data at narrow widths. Files:

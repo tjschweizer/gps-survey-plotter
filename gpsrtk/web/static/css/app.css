@@ -520,18 +520,29 @@ dialog .dlg-buttons a.button {
   position: absolute;
   top: 8px;
   right: 8px;
-  width: 190px;
-  background: rgba(255, 255, 255, 0.92);
+  width: 210px;
+  background: rgba(255, 255, 255, 0.94);
   border: 1px solid var(--border);
   border-radius: 4px;
-  padding: 6px 8px 7px;
-  font-size: 11px;
+  padding: 5px 8px 7px;
+  font-size: 12px;
   color: var(--text);
-  pointer-events: none;
 }
-.map-legend .legend-title { font-weight: 600; margin-bottom: 4px; }
+.map-legend .legend-head { display: flex; align-items: center; gap: 6px; font-weight: 600; }
+.map-legend .legend-name { flex: 1; min-width: 0; }
+.map-legend .legend-toggle { border: 0; background: none; padding: 0 2px; font-size: 12px; cursor: pointer; }
+.map-legend .legend-body { margin-top: 4px; }
 .map-legend .bar { height: 10px; border-radius: 2px; border: 1px solid rgba(0, 0, 0, 0.15); }
-.map-legend .ends { display: flex; justify-content: space-between; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.map-legend .ticks { display: flex; justify-content: space-between; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.map-legend .key { margin-top: 6px; display: grid; gap: 2px; }
+.map-legend .key .mark { display: inline-block; width: 11px; height: 11px; margin-right: 5px; vertical-align: -1px; }
+.map-legend .mark.spot { background: rgba(255, 60, 60, 0.86); border: 1px solid #000; transform: rotate(45deg) scale(0.75); }
+.map-legend .mark.plan { border-radius: 50%; border: 2px solid; }
+.map-legend .mark.plan.terrain { border-color: rgb(192, 57, 43); }
+.map-legend .mark.plan.feature { border-color: rgb(31, 95, 168); }
+.map-legend .mark.plan.control { border-color: rgb(43, 122, 61); }
+.map-legend .mark.setup { width: 0; height: 0; border-left: 6px solid transparent; border-right: 6px solid transparent;
+                          border-bottom: 11px solid rgb(230, 126, 34); }
 .map-legend .note { color: var(--muted); margin-top: 4px; }
 .map-legend .note .arrow { color: #1fb4c8; font-weight: 700; }
 

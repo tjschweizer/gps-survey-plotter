@@ -683,3 +683,43 @@ def test_the_3d_view_is_in_feet_on_a_named_datum(page):
     assert titles == ["east (ft)", "elevation (ft, raw ellipsoidal)",
                       "elevation (ft, raw ellipsoidal)"]
     page.click("#tabs button[data-tab='plan']")
+
+
+def test_the_legend_has_ticks_a_key_and_folds(page, live):
+    legend = page.locator(".map-legend")
+    ticks = legend.locator(".ticks span").all_inner_texts()
+    assert len(ticks) == 5 and all(t.replace(".", "").isdigit() for t in ticks)
+    assert "SW Maps shot" in legend.inner_text()
+    seed(live, page, (E0, N0))
+    with live.server.acting():
+        live.state.plan.setups.append(__import__("gpsrtk.plan", fromlist=["x"]).PlannedSetup("A", E0 + 3, N0))
+        live.state.plan_changed()
+    page.evaluate("() => window.yardsurvey.refresh()")
+    page.wait_for_timeout(300)
+    text = legend.inner_text()
+    assert "plan shot: terrain" in text and "laser setup" in text
+    legend.locator(".legend-toggle").click()
+    assert legend.locator(".legend-body").is_hidden()
+    legend.locator(".legend-toggle").click()
+    assert legend.locator(".legend-body").is_visible()
+
+
+def test_at_1280_the_legend_keeps_off_the_survey(browser, live):
+    """At 1280x720 the legend used to cover the lot. It starts folded where
+    the map is narrow, and the home view leaves it a margin."""
+    _reset(live)
+    context = browser.new_context(viewport={"width": 1280, "height": 720})
+    pg = context.new_page()
+    pg.goto(live.url)
+    pg.wait_for_function("() => window.yardsurvey.store.state?.has_data")
+    pg.wait_for_timeout(600)
+    try:
+        legend = pg.locator(".map-legend")
+        assert legend.locator(".legend-body").is_hidden()
+        box = legend.bounding_box()
+        home = pg.evaluate("() => window.yardsurvey.store.state.home")
+        corners = [to_screen(pg, home[0], home[3]), to_screen(pg, home[2], home[3])]
+        right_edge = max(x for x, _ in corners)
+        assert right_edge <= box["x"] + 1, "the framed survey ends left of the legend"
+    finally:
+        context.close()
