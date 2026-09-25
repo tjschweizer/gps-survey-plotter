@@ -25,7 +25,7 @@ from pathlib import Path
 
 import numpy as np
 
-from ..plan import purpose_group
+from ..plan import is_guide, purpose_group
 from ..units import m_to_ft
 
 MAP_PX = 900          # rendered map size; keeps the inlined image reasonable
@@ -37,6 +37,7 @@ GROUP_STYLE = {
     "terrain": ("#c0392b", "circle"),
     "feature": ("#1f5fa8", "square"),
     "control": ("#2b7a3d", "diamond"),
+    "guide": ("#783ca0", "circle"),
 }
 
 
@@ -110,8 +111,15 @@ def _map_svg(plan, extent, uri: str | None, size: int = MAP_PX,
             # these lines get drawn.
             parts.append(f'<polyline {geometry} stroke="#ffffff" '
                          f'stroke-width="5.5" opacity="0.85"/>')
-            parts.append(f'<polyline {geometry} stroke="#1f5fa8" '
-                         f'stroke-width="2.4" stroke-dasharray="9 5"/>')
+            if line.kind == "transect":
+                parts.append(f'<polyline {geometry} stroke="#783ca0" '
+                             f'stroke-width="3" stroke-dasharray="2 6"/>')
+                x, y = (float(v) for v in pts[0].split(","))
+                parts.append(f'<text x="{x}" y="{y - 8}" class="guide-label">'
+                             f'{html.escape(line.line_id)}: walk or mow first</text>')
+            else:
+                parts.append(f'<polyline {geometry} stroke="#1f5fa8" '
+                             f'stroke-width="2.4" stroke-dasharray="9 5"/>')
 
     for setup in plan.setups:
         if setup.e is None or setup.n is None:
@@ -124,6 +132,8 @@ def _map_svg(plan, extent, uri: str | None, size: int = MAP_PX,
             f'<text x="{x}" y="{y+22}" class="setup-label">{html.escape(setup.name)}</text>')
 
     for p in plan.points:
+        if is_guide(p.purpose):
+            continue                 # the transect line says it all
         colour, shape = GROUP_STYLE.get(purpose_group(p.purpose),
                                         GROUP_STYLE["terrain"])
         x, y = point_px(p)
@@ -146,6 +156,8 @@ def _rows(plan, site) -> str:
     """
     out = []
     for p in sorted(plan.points, key=lambda q: q.number):
+        if is_guide(p.purpose):
+            continue                 # a guide, not a shot: nothing to read
         # Where to actually walk: the measured position once there is one,
         # otherwise the planned mark.
         e, n, _, _ = plan.resolve(p.number)
@@ -249,6 +261,8 @@ def write_field_sheet(plan, path: str | Path, *, basemap=None, site=None,
   .num {{ font: 700 13px sans-serif; fill: #fff; text-anchor: middle;
           paint-order: stroke; stroke: #000; stroke-width: 3px;
           stroke-linejoin: round; }}
+  .guide-label {{ font: 700 11px sans-serif; fill: #783ca0;
+                  paint-order: stroke; stroke: #fff; stroke-width: 3px; }}
   .setup-label {{ font: 700 11px sans-serif; fill: #e67e22; text-anchor: middle;
                   paint-order: stroke; stroke: #fff; stroke-width: 3px; }}
   table {{ border-collapse: collapse; width: 100%; margin-top: 14px;
@@ -304,6 +318,7 @@ def write_field_sheet(plan, path: str | Path, *, basemap=None, site=None,
   <span class="swatch" style="background:#1f5fa8"></span>built feature
   <span class="swatch" style="background:#2b7a3d"></span>control / reference
   <span class="swatch" style="background:#e67e22"></span>laser setup
+  <span class="swatch" style="background:#783ca0"></span>tie transect: walk or mow these first
   &nbsp;&mdash;&nbsp; positions are <b>feet from the site origin</b>, east then north.
   <br>
   <b>Rod (in)</b> is the only column that must be filled in on every row.

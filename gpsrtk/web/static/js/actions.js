@@ -126,6 +126,9 @@ export function setMode(mode) {
 export const writeFieldSheet = () =>
   act("/api/plan/fieldsheet", {}, { busy: "Rendering field sheet…" });
 
+export const addTieTransects = () =>
+  requireData() && act("/api/plan/transects", {}, { busy: "Placing tie transects…" });
+
 export async function openPlan() {
   const path = await fileDialog({ title: "Open shot plan", filters: FILTERS.plan });
   if (path) await act("/api/plan/open", { path }, { busy: "Opening plan…" });

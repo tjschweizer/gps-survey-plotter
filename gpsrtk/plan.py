@@ -71,6 +71,9 @@ PURPOSE_GROUPS: dict[str, tuple[str, ...]] = {
                 "sidewalk edge", "curb flowline", "wall", "step",
                 "fence", "tree", "utility"),
     "control": ("plat reference", "monument", "benchmark", "check"),
+    # Not shots at all: marks to walk or mow along, so the next outing
+    # shares ground with the last. Never read with the rod.
+    "guide": ("tie transect",),
 }
 
 PURPOSES: tuple[str, ...] = tuple(
@@ -78,6 +81,7 @@ PURPOSES: tuple[str, ...] = tuple(
 
 TERRAIN_PURPOSES = frozenset(PURPOSE_GROUPS["terrain"])
 CONTROL_PURPOSES = frozenset(PURPOSE_GROUPS["control"])
+GUIDE_PURPOSES = frozenset(PURPOSE_GROUPS["guide"])
 
 DEFAULT_LINE_PURPOSE = "breakline"
 
@@ -97,6 +101,11 @@ def purpose_group(purpose: str) -> str:
 def is_terrain(purpose: str) -> bool:
     """Whether a shot describes the ground surface itself."""
     return purpose in TERRAIN_PURPOSES
+
+
+def is_guide(purpose: str) -> bool:
+    """Whether a point only guides the next outing (a tie transect vertex)."""
+    return purpose in GUIDE_PURPOSES
 
 
 @dataclass
@@ -459,7 +468,7 @@ class Plan:
 
         rows = []
         for p in self.points:
-            if not p.has_reading:
+            if not p.has_reading or is_guide(p.purpose):
                 continue
             e, n, method, sigma = self.resolve(p.number)
             rows.append({
@@ -479,11 +488,12 @@ class Plan:
         return pd.DataFrame(rows)
 
     def coverage(self) -> dict:
-        done = [p for p in self.points if p.has_reading]
+        shots = [p for p in self.points if not is_guide(p.purpose)]
+        done = [p for p in shots if p.has_reading]
         return {
-            "planned": len(self.points),
+            "planned": len(shots),
             "observed": len(done),
-            "outstanding": len(self.points) - len(done),
+            "outstanding": len(shots) - len(done),
             "by_method": {m: sum(1 for p in done if p.method == m)
                           for m in sorted({p.method for p in done})},
         }

@@ -797,3 +797,99 @@ def test_opening_a_plan_fills_it_too(planned, tmp_path):
     planned.open_plan(saved)
     assert planned.plan.by_number(3).observed_e is not None
     assert planned.last_fill.filled
+
+
+# --- tie transects -------------------------------------------------------------------
+
+def _transects(state):
+    d = state.filtered.df
+    return PE.add_tie_transects(state.plan, d[P.E].to_numpy(), d[P.N].to_numpy(),
+                                d[P.SESSION].astype(str).to_numpy())
+
+
+def test_tie_transects_run_over_covered_ground(state):
+    text = _transects(state)
+    lines = [ln for ln in state.plan.lines if ln.kind == "transect"]
+    assert sorted(ln.line_id for ln in lines) == ["tie-EW-1", "tie-EW-2",
+                                                  "tie-NS-1", "tie-NS-2"]
+    assert "Walk or mow these first" in text
+
+    d = state.filtered.df
+    covered = set(zip(np.floor(d[P.E] / 0.5).astype(int), np.floor(d[P.N] / 0.5).astype(int)))
+    for ln in lines:
+        a, b = (state.plan.by_number(k) for k in ln.numbers)
+        length = np.hypot(b.planned_e - a.planned_e, b.planned_n - a.planned_n)
+        assert length >= 5.0
+        t = np.linspace(0, 1, int(length / 0.25) + 1)
+        e = a.planned_e + t * (b.planned_e - a.planned_e)
+        n = a.planned_n + t * (b.planned_n - a.planned_n)
+        inside = np.array([(int(np.floor(x / 0.5)), int(np.floor(y / 0.5))) in covered
+                           for x, y in zip(e, n)])
+        # Never more than 2 m of the line off covered ground at a stretch.
+        run = longest = 0
+        for ok in inside:
+            run = 0 if ok else run + 1
+            longest = max(longest, run)
+        assert longest * 0.25 <= 2.0 + 0.5
+        assert inside[0] and inside[-1]
+
+
+def test_tie_transects_are_guides_not_shots(state):
+    _transects(state)
+    payload = _payload(state)
+    guides = [p for p in payload["points"] if p["guide"]]
+    assert len(guides) == 8
+    assert "tie transect" not in payload["purposes"]
+    assert state.plan.coverage()["planned"] == 0          # nothing to read
+    for p in state.plan.points:
+        p.rod_in = 40.0                                   # even if one were typed
+    assert state.plan.to_frame().empty
+
+
+def test_adding_tie_transects_again_replaces_them(state):
+    _transects(state)
+    _transects(state)
+    assert len(state.plan.lines) == 4 and len(state.plan.points) == 8
+
+
+def test_an_outing_that_walks_only_the_transects_is_reconcilable(state, tmp_path):
+    """Overlap is luck unless planned. Walking the transects is enough."""
+    import zipfile
+
+    import pandas as pd
+
+    from synthetic import ORIGIN_E, ORIGIN_N, _latlon, _stamp, ground
+
+    _transects(state)
+    rows = []
+    for ln in state.plan.lines:
+        a, b = (state.plan.by_number(k) for k in ln.numbers)
+        steps = int(np.hypot(b.planned_e - a.planned_e, b.planned_n - a.planned_n) / 0.3)
+        for t in np.linspace(0, 1, steps + 1):
+            rows.append((a.planned_e + t * (b.planned_e - a.planned_e),
+                         a.planned_n + t * (b.planned_n - a.planned_n)))
+    e, n = np.array(rows).T
+    lat, lon = _latlon(e, n)
+    times = pd.Timestamp("2026-10-10 09:00") + pd.to_timedelta(np.arange(len(e)) * 0.5, "s")
+    walk = pd.DataFrame({
+        "ID": np.arange(1, len(e) + 1), "Track Name": "Transects",
+        "Time": _stamp(pd.Series(times)), "X": e, "Y": n,
+        "Elevation": ground(e - ORIGIN_E, n - ORIGIN_N) + 1.5,
+        "Lat": lat, "Lon": lon, "Fix ID": 4, "Speed": 1.0,
+    })
+    path = tmp_path / "Walk.zip"
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("Walk_TRACK_POINTS.csv", walk.to_csv(index=False))
+    report = state.add_export(path)
+    assert report.reconcilable, report.describe()
+    assert not report.unlinked
+
+
+def test_the_field_sheet_draws_transects_without_rows(state, tmp_path):
+    from gpsrtk.io.fieldsheet import write_field_sheet
+
+    _transects(state)
+    state.plan.add_point(E0, N0)
+    text = write_field_sheet(state.plan, tmp_path / "t.html").read_text("utf-8")
+    assert "tie-EW-1: walk or mow first" in text
+    assert text.count('class="num-cell"') == 1                # only the shot

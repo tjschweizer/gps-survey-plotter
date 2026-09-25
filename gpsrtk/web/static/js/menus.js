@@ -61,6 +61,8 @@ function spec(providers) {
       { label: "Add shot", run: () => A.setMode("add_point") },
       { label: "Add line", run: () => A.setMode("add_line") },
       { label: "Add laser setup", run: () => A.setMode("add_setup") },
+      { label: "Add tie transects", run: A.addTieTransects,
+        tip: "Lines through the best-covered ground, to walk or mow first so the next outing overlaps this one" },
       { label: "Navigate", key: "Esc", run: () => A.setMode("navigate") },
       "-",
       { label: "Print field sheet…", run: A.writeFieldSheet },

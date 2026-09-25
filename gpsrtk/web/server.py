@@ -60,6 +60,7 @@ from ..app.sessions import sessions_payload
 from ..io.imagery import NoCoverageError
 from ..io.vector import default_vector_providers
 from ..project import SUFFIX as PROJECT_SUFFIX
+from ..model.pointset import E, N
 from ..units import m_to_ft
 from ..vertical import height_label
 from . import files
@@ -922,6 +923,19 @@ def create_app(state: AppState | None = None, *, vector_providers=None,
                         for x, y in body.get("vertices", [])]
             line = plan_edit(lambda: PE.add_line(st.plan, vertices))
             return srv.reply(line=line.line_id if line else None)
+
+    @app.post("/api/plan/transects")
+    def plan_transects():
+        from ..model.pointset import SESSION as S
+
+        with srv.acting("Placing tie transects…"):
+            srv.require_data()
+            ps = st.filtered if st.filtered is not None else st.source
+            d = ps.df
+            text = plan_edit(lambda: PE.add_tie_transects(
+                st.plan, d[E].to_numpy(), d[N].to_numpy(),
+                d[S].astype(str).to_numpy() if S in d.columns else None))
+            return srv.reply(notice("Tie transects", text))
 
     @app.post("/api/plan/cell")
     def plan_cell(body: dict = Body(...)):

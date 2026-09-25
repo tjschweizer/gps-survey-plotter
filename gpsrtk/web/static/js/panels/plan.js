@@ -134,7 +134,8 @@ function load(p) {
   queued = null;
   const keep = selection().filter((n) => p.points.some((pt) => pt.number === n));
   restoring = true;
-  table.replaceData(p.points).then(() => {
+  // Tie-transect vertices are guides drawn on the map, not shots to read.
+  table.replaceData(p.points.filter((pt) => !pt.guide)).then(() => {
     if (keep.length) table.selectRow(keep);
     restoring = false;
     setSelection(keep);

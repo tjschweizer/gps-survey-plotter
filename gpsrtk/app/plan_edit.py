@@ -25,7 +25,7 @@ from __future__ import annotations
 import math
 
 from ..plan import (PURPOSES, SIGMA_M, Plan, PlanLine, PlannedPoint,
-                    PlannedSetup, Tie, purpose_group)
+                    PlannedSetup, Tie, is_guide, purpose_group)
 from ..units import ft_to_m, m_to_ft, parse_rod
 
 NAVIGATE, ADD_POINT, ADD_LINE, ADD_SETUP = ("navigate", "add_point",
@@ -440,6 +440,109 @@ def insert_vertex(plan: Plan, number: int) -> PlannedPoint:
     return new
 
 
+# --- tie transects -----------------------------------------------------------------
+
+TIE_PURPOSE = "tie transect"
+TIE_CELL_M = 0.5            # the surface's bin size
+TIE_MAX_GAP_M = 2.0         # a run may jump a gap this long
+TIE_MIN_LENGTH_M = 5.0
+TIE_PER_AXIS = 2
+
+
+def tie_transect_runs(e, n, sessions=None) -> list[dict]:
+    """Up to two east-west and two north-south runs over well-covered ground.
+
+    Each candidate is a row (or column) of 0.5 m cells, clipped to its
+    longest run of covered cells - gaps of up to 2 m allowed, 5 m long at
+    least - and scored by how many sessions cover its cells, so ground every
+    outing reached is preferred. The two best of each direction are chosen
+    at least a third of the lot apart (5 m at least), so they cross the lot
+    rather than bunching on one well-mown strip. Positions are cell centres,
+    anchored at 0,0 like the site origin.
+    """
+    import numpy as np
+    import pandas as pd
+
+    e, n = np.asarray(e, dtype=float), np.asarray(n, dtype=float)
+    ok = np.isfinite(e) & np.isfinite(n)
+    if not ok.any():
+        return []
+    frame = pd.DataFrame({
+        "ix": np.floor(e[ok] / TIE_CELL_M).astype(np.int64),
+        "iy": np.floor(n[ok] / TIE_CELL_M).astype(np.int64),
+        "s": (np.asarray(sessions, dtype=object)[ok] if sessions is not None
+              else 0)})
+    cover = frame.groupby(["ix", "iy"])["s"].nunique().reset_index()
+    gap_cells = int(round(TIE_MAX_GAP_M / TIE_CELL_M))
+
+    runs = []
+    for axis, along, across in (("E-W", "ix", "iy"), ("N-S", "iy", "ix")):
+        candidates = []
+        for row, part in cover.groupby(across):
+            part = part.sort_values(along)
+            pos = part[along].to_numpy()
+            weight = part["s"].to_numpy()
+            breaks = np.flatnonzero(np.diff(pos) - 1 > gap_cells) + 1
+            for idx in np.split(np.arange(len(pos)), breaks):
+                length = (pos[idx[-1]] - pos[idx[0]] + 1) * TIE_CELL_M
+                if length >= TIE_MIN_LENGTH_M:
+                    candidates.append((int(weight[idx].sum()), length, int(row),
+                                       int(pos[idx[0]]), int(pos[idx[-1]])))
+        if not candidates:
+            continue
+        rows = cover[across]
+        span = (rows.max() - rows.min() + 1) * TIE_CELL_M
+        spacing = max(5.0, span / 3.0)
+        chosen = []
+        for c in sorted(candidates, key=lambda c: (-c[0], -c[1], c[2])):
+            if all(abs(c[2] - o[2]) * TIE_CELL_M >= spacing for o in chosen):
+                chosen.append(c)
+            if len(chosen) == TIE_PER_AXIS:
+                break
+        for _, length, row, first, last in sorted(chosen, key=lambda c: c[2]):
+            mid = (row + 0.5) * TIE_CELL_M
+            a, b = (first + 0.5) * TIE_CELL_M, (last + 0.5) * TIE_CELL_M
+            ends = [(a, mid), (b, mid)] if axis == "E-W" else [(mid, a), (mid, b)]
+            runs.append({"axis": axis, "vertices": ends, "length_m": length})
+    return runs
+
+
+def add_tie_transects(plan: Plan, e, n, sessions=None) -> str:
+    """Replace the plan's tie transects with new ones. Returns what happened.
+
+    Overlap between outings is luck unless it is planned, and an outing
+    without it cannot be recovered. Walking or mowing these lines first
+    makes the next outing share ground with the ones already loaded.
+    """
+    runs = tie_transect_runs(e, n, sessions)
+    if not runs:
+        raise PlanEditError(
+            "Tie transects",
+            f"No run of covered ground {TIE_MIN_LENGTH_M:g} m long was found. "
+            "Load an outing first.")
+    for ln in [ln for ln in plan.lines if ln.kind == "transect"
+               and all(is_guide(getattr(plan.by_number(k), "purpose", ""))
+                       for k in ln.numbers)]:
+        for number in list(ln.numbers):
+            plan.remove_point(number)
+        plan.lines.remove(ln)
+    counts: dict[str, int] = {}
+    made = []
+    for run in runs:
+        key = "EW" if run["axis"] == "E-W" else "NS"
+        counts[key] = counts.get(key, 0) + 1
+        line_id = f"tie-{key}-{counts[key]}"
+        plan.add_line(line_id, run["vertices"], kind="transect",
+                      purpose=TIE_PURPOSE,
+                      note="walk or mow this first on the next outing")
+        made.append(f"{line_id} ({run['axis']}, {run['length_m']:.1f} m)")
+    return (f"{len(made)} tie transects through the best-covered ground: "
+            + ", ".join(made) + ".\n\nWalk or mow these first on the next "
+            "outing. That gives it ground in common with the outings already "
+            "loaded, so its offset can be solved. They are guides, not shots: "
+            "they have no rod rows and never enter the level network.")
+
+
 # --- what the views draw -----------------------------------------------------------
 
 def plan_payload(plan: Plan, site) -> dict:
@@ -469,6 +572,7 @@ def plan_payload(plan: Plan, site) -> dict:
             "method": p.method,
             "note": p.observed_note or p.note,
             "has_reading": p.has_reading,
+            "guide": is_guide(p.purpose),
             "locked": locked,
             "position_method": method,
             "x": x, "y": y, "px": px, "py": py,
@@ -491,7 +595,7 @@ def plan_payload(plan: Plan, site) -> dict:
         if ln.closed and len(xy) > 2:
             xy.append(xy[0])
         lines.append({"line_id": ln.line_id, "numbers": list(ln.numbers),
-                      "closed": ln.closed, "xy": xy})
+                      "closed": ln.closed, "xy": xy, "kind": ln.kind})
 
     setups = []
     for s in plan.setups:
@@ -508,7 +612,8 @@ def plan_payload(plan: Plan, site) -> dict:
         "coverage": coverage_text(plan),
         "line_ids": [ln.line_id for ln in plan.lines],
         "setup_choices": setup_choices(plan),
-        "purposes": list(PURPOSES),
+        # Guide purposes are placed by Plan > Add tie transects, not typed.
+        "purposes": [p for p in PURPOSES if not is_guide(p)],
         "methods": METHODS,
         "frames": {k: list(v) for k, v in COORD_FRAMES.items()},
         "hints": MODE_HINTS,

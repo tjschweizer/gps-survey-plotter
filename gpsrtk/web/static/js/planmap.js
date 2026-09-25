@@ -18,7 +18,8 @@ import { act } from "./api.js";
 
 // Coloured by purpose GROUP: terrain, built feature, or control. Individual
 // purposes are far too numerous to distinguish by colour legibly.
-const GROUP_PEN = { terrain: [192, 57, 43], feature: [31, 95, 168], control: [43, 122, 61] };
+const GROUP_PEN = { terrain: [192, 57, 43], feature: [31, 95, 168], control: [43, 122, 61],
+                    guide: [120, 60, 160] };
 const SELECTED = [255, 190, 0];
 const SETUP = [230, 126, 34];
 const LEADER = [110, 110, 110];
@@ -39,10 +40,22 @@ map.addLayer(new ol.layer.Vector({
 const lineSource = new ol.source.Vector();
 map.addLayer(new ol.layer.Vector({
   source: lineSource, zIndex: 150, updateWhileInteracting: true,
-  style: new ol.style.Style({
-    stroke: new ol.style.Stroke({ color: rgba(GROUP_PEN.terrain), width: 2.2, lineDash: [8, 5] }),
-  }),
+  // A tie transect is a path to walk or mow first, not a break line to shoot.
+  style: (f) => (f.get("kind") === "transect" ? transectStyle(f) : breaklineStyle),
 }));
+const breaklineStyle = new ol.style.Style({
+  stroke: new ol.style.Stroke({ color: rgba(GROUP_PEN.terrain), width: 2.2, lineDash: [8, 5] }),
+});
+function transectStyle(f) {
+  return new ol.style.Style({
+    stroke: new ol.style.Stroke({ color: rgba(GROUP_PEN.guide, 0.85), width: 3, lineDash: [2, 6] }),
+    text: new ol.style.Text({
+      text: `${f.get("line_id")}: walk first`, placement: "line", font: "600 11px system-ui, sans-serif",
+      fill: new ol.style.Fill({ color: rgba(GROUP_PEN.guide) }),
+      stroke: new ol.style.Stroke({ color: "rgba(255,255,255,0.9)", width: 3 }),
+    }),
+  });
+}
 
 const setupSource = new ol.source.Vector();
 map.addLayer(new ol.layer.Vector({
@@ -111,7 +124,7 @@ function rebuild(plan) {
   lineSource.clear(true);
   lineSource.addFeatures(plan.lines.filter((ln) => ln.xy.length > 1).map((ln) => new ol.Feature({
     geometry: new ol.geom.LineString(ln.xy), line_id: ln.line_id, numbers: ln.numbers,
-    closed: ln.closed,
+    closed: ln.closed, kind: ln.kind,
   })));
   setupSource.clear(true);
   setupSource.addFeatures(plan.setups.map((s) => new ol.Feature({

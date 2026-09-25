@@ -107,6 +107,7 @@ These were set by the owner and apply to every item.
 | After A2 | 386 passed, 51 skipped, 40 deselected | 35 passed |
 | After A4 | 391 passed, 51 skipped, 40 deselected | 35 passed |
 | After A3 | 403 passed, 51 skipped, 40 deselected | 36 passed |
+| After A5 | 408 passed, 51 skipped, 42 deselected | 37 passed |
 
 Of the 55 skips, 50 need real data. The other 5 are network tests that the
 sandbox proxy refused.
@@ -178,8 +179,8 @@ These answers change the designs in section 5.
 | 16 | A6 | Source fingerprints | code health | ✅ `af97773` |
 | 17 | A2 | Fill plan shots from SW Maps records by station | workflow | ✅ `ea97af3` |
 | 18 | A4 | Per-setup level closure and laser check | workflow | ✅ `7d29d7b` |
-| 19 | A3 | Control marks and start/end check shots | workflow | ✅ (**format v3**) |
-| 20 | A5 | Tie transects | workflow | todo |
+| 19 | A3 | Control marks and start/end check shots | workflow | ✅ `1a5cf80` (**format v3**) |
+| 20 | A5 | Tie transects | workflow | ✅ |
 | 21 | A1 | Laser terrain shots in the surface (and the Revit file) | processing | todo |
 | 22 | A7 | Spot IDs on the map and in the datum dialog | UI | todo |
 | 23 | C13 | Status strip above the map | UI | todo |
@@ -855,7 +856,28 @@ permanent benchmark" has no code path behind it.
 
 *Breaking?* Project format v3. Approved.
 
-**A5 — Tie transects**
+**A5 — Tie transects** ✅
+- **Done:** `plan.py` purpose group "guide" = ("tie transect",),
+  `GUIDE_PURPOSES`, `is_guide`; guide points are left out of `to_frame`
+  (never in the network) and `coverage()`. `plan_edit.tie_transect_runs`
+  scores rows/columns of 0.5 m cells by the number of sessions covering
+  each cell, clips each to its longest run (gaps ≤ 2 m, ≥ 5 m), and picks
+  the two best per direction at least max(5 m, a third of the lot) apart;
+  `add_tie_transects` replaces any existing transect lines (`tie-EW-1`...
+  `tie-NS-2`, kind "transect", two vertices each). `POST
+  /api/plan/transects` uses the filtered points of every session. UI:
+  Plan ▸ Add tie transects; the table filters out guide points; the map
+  draws transects in purple, dotted, labelled "walk first"; the table's
+  purpose list leaves "tie transect" out. Field sheet: transects drawn and
+  labelled "walk or mow first", in the legend, with no marker and no row.
+  Note: with every point deleted, `Plan.next_number` restarts at 1, so a
+  re-run can reuse the removed guide points' numbers (harmless, since guide
+  points never have rows). Tests: `test_plan_edit.py::test_tie_transects_run_over_covered_ground`,
+  `::test_tie_transects_are_guides_not_shots`,
+  `::test_adding_tie_transects_again_replaces_them`,
+  `::test_an_outing_that_walks_only_the_transects_is_reconcilable`,
+  `::test_the_field_sheet_draws_transects_without_rows`,
+  `test_web_browser.py::test_tie_transects_are_drawn_but_not_listed`.
 - **What:** Plan ▸ "Add tie transects". Add 2 E-W and 2 N-S lines placed
   through the best-covered ground of the loaded sessions (occupied 0.5 m
   cells), each clipped to its longest covered run (gaps ≤ 2 m allowed, length

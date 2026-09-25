@@ -578,3 +578,18 @@ def test_control_marks_are_added_from_the_datum_menu(page, live):
     finally:
         with live.server.acting():
             live.state.site.control = []
+
+
+def test_tie_transects_are_drawn_but_not_listed(page, live):
+    """Plan ▸ Add tie transects: lines on the map, no rows in the table."""
+    page.click("#menubar .menu-root > button:has-text('Plan')")
+    page.locator("#menubar .menu:visible button.item:has-text('Add tie transects')").click()
+    dialog = page.locator("dialog[open]")
+    dialog.wait_for()
+    assert "Walk or mow these first" in dialog.inner_text()
+    dialog.locator("button").last.click()
+    page.wait_for_timeout(400)
+    assert len(live.state.plan.lines) == 4
+    assert page.locator("#plan-table .tabulator-row").count() == 0
+    kinds = page.evaluate("() => window.yardsurvey.store.state.plan.lines.map((l) => l.kind)")
+    assert kinds == ["transect"] * 4
