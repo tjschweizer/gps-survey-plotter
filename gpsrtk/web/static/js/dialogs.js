@@ -363,16 +363,19 @@ export function controlMarksDialog(form) {
 // --- the datum tie --------------------------------------------------------------
 
 export function datumDialog(form) {
-  const point = h("input", { type: "text", value: String(form.point), list: "datum-points" });
+  // Every label is tied to its field, so a click on it focuses the field and
+  // a screen reader announces what the field is.
+  const point = h("input", { id: "datum-point", type: "text", value: String(form.point), list: "datum-points" });
   // Each option carries what the station is, so a number can be picked by
   // what was shot there rather than remembered from the phone.
   const choices = form.choices?.length ? form.choices : form.points.map((p) => ({ point: p, label: "" }));
   const points = h("datalist", { id: "datum-points" },
     choices.map((c) => h("option", { value: String(c.point), label: c.label || undefined })));
-  const elev = h("input", { type: "number", step: "0.0001", value: String(form.elev_ft) });
-  const note = h("input", { type: "text", value: form.note, placeholder: "garage slab at the overhead door, say" });
-  const frame = h("input", { type: "text", value: form.frame });
-  const tied = h("input", { type: "checkbox", checked: form.tied });
+  const elev = h("input", { id: "datum-elev", type: "number", step: "0.0001", value: String(form.elev_ft) });
+  const note = h("input", { id: "datum-note", type: "text", value: form.note,
+                            placeholder: "garage slab at the overhead door, say" });
+  const frame = h("input", { id: "datum-frame", type: "text", value: form.frame });
+  const tied = h("input", { id: "datum-tied", type: "checkbox", checked: form.tied });
   const warning = h("div", {});
   const sync = () => {
     warning.textContent = tied.checked ? form.tied_note : form.local_note;
@@ -384,11 +387,12 @@ export function datumDialog(form) {
   const body = h("div", { class: "dlg-body form", style: { maxWidth: "470px" } },
     h("div", { class: "muted", style: { whiteSpace: "pre-wrap" } }, form.help),
     h("div", { class: "grid2" },
-      h("label", {}, "Benchmark point"), h("div", {}, point, points),
-      h("label", {}, "Held at elevation (ft)"), elev,
-      h("label", {}, "What was shot"), note,
-      h("label", {}, "Reference frame"), frame,
-      h("span"), h("label", {}, tied, "This is a real elevation in that frame, not a chosen number")),
+      h("label", { for: "datum-point" }, "Benchmark point"), h("div", {}, point, points),
+      h("label", { for: "datum-elev" }, "Held at elevation (ft)"), elev,
+      h("label", { for: "datum-note" }, "What was shot"), note,
+      h("label", { for: "datum-frame" }, "Reference frame"), frame,
+      h("span"), h("label", { for: "datum-tied" }, tied,
+                   "This is a real elevation in that frame, not a chosen number")),
     warning);
 
   return modal("", "Datum tie", body,

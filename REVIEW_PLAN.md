@@ -120,6 +120,7 @@ These were set by the owner and apply to every item.
 | After C20 | 422 passed, 51 skipped, 53 deselected | 48 passed |
 | After C21 | 424 passed, 51 skipped, 53 deselected | not re-run (no page change) |
 | After C22 | 424 passed, 51 skipped, 54 deselected | 49 passed |
+| After C23 | 424 passed, 51 skipped, 55 deselected | 50 passed |
 
 Of the 55 skips, 50 need real data. The other 5 are network tests that the
 sandbox proxy refused.
@@ -204,8 +205,8 @@ These answers change the designs in section 5.
 | 29 | C19 | Rod column second, in the table and the field sheet | UI | ✅ `9b905b7` |
 | 30 | C20 | Readable filter stack | UI | ✅ `f3a6f34` |
 | 31 | C21 | Grouped fetch errors and a short connect timeout | UI | ✅ `8cd2b66` |
-| 32 | C22 | File dialog: date column, sorting, keyboard | UI | ✅ |
-| 33 | C23 | Keyboard menus and labelled fields | UI | todo |
+| 32 | C22 | File dialog: date column, sorting, keyboard | UI | ✅ `e361792` |
+| 33 | C23 | Keyboard menus and labelled fields | UI | ✅ |
 | 34 | A8 | Start panel and recent files | UI | todo |
 | 35 | C29 | Solve report wording | UI | todo |
 | 36 | C10 | World file on the grid | processing | todo |
@@ -1170,7 +1171,15 @@ Evidence for these is in the review screenshots: synthetic export,
 - **Verify:** browser test.
 - **Breaking?:** no.
 
-**C23 — Keyboard menus and labelled fields**
+**C23 — Keyboard menus and labelled fields** ✅
+- **Done:** `menus.js` handles keys on the menu bar (`onMenuKey`):
+  Down/Enter/Space open a menu at its first item; Up/Down/Home/End move;
+  Right opens a submenu or moves to the next menu; Left closes a submenu or
+  moves to the previous one; Escape backs out one level and returns focus;
+  a button item still activates itself on Enter. The datum dialog's labels
+  have `for`/`id` (`datum-point`, `datum-elev`, `datum-note`,
+  `datum-frame`, `datum-tied`). Test:
+  `test_web_browser.py::test_the_menus_work_from_the_keyboard`.
 - **What:** Arrow, Enter and Esc work in menus and submenus, which today open
   on hover only (`menus.js:111`). Dialog labels are linked to their inputs
   with `for`/`id` (`dialogs.js:229`).

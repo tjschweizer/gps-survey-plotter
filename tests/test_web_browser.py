@@ -862,3 +862,39 @@ def test_the_file_dialog_sorts_by_date_and_answers_the_keyboard(page, live, tmp_
         page.keyboard.press("Escape")
     finally:
         live.server.last_dir = previous
+
+
+def test_the_menus_work_from_the_keyboard(page, live):
+    """Menus used to open on hover only."""
+    file_button = page.locator("#menubar .menu-root > button:has-text('File')")
+    file_button.focus()
+    page.keyboard.press("ArrowDown")
+    focused = lambda: page.evaluate("() => document.activeElement.textContent")  # noqa: E731
+    assert focused().startswith("Open export")
+    page.keyboard.press("ArrowDown")
+    assert focused().startswith("Add export")
+    page.keyboard.press("ArrowUp")
+    assert focused().startswith("Open export")
+    page.keyboard.press("ArrowRight")                 # on to the Data menu
+    assert focused().startswith("Fetch all basemaps")
+    page.keyboard.press("ArrowDown")                  # a submenu entry
+    assert focused().startswith("Fetch one imagery source")
+    page.keyboard.press("ArrowRight")
+    assert page.locator("#menubar .item.has-sub.open").count() == 1
+    page.keyboard.press("Escape")                     # out of the submenu
+    assert page.locator("#menubar .item.has-sub.open").count() == 0
+    assert focused().startswith("Fetch one imagery source")
+    page.keyboard.press("Escape")                     # out of the menu
+    assert page.locator("#menubar .menu:visible").count() == 0
+    assert focused() == "Data"
+
+    # Enter runs an item: Datum > Datum tie... opens its dialog.
+    page.keyboard.press("ArrowRight")
+    page.keyboard.press("Enter")
+    page.keyboard.press("Enter")
+    dialog = page.locator("dialog[open]")
+    dialog.wait_for()
+    dialog.locator("label[for='datum-elev']").click()
+    assert page.evaluate("() => document.activeElement.id") == "datum-elev"
+    assert dialog.get_by_label("Held at elevation (ft)").input_value() == "100"
+    page.keyboard.press("Escape")

@@ -125,9 +125,86 @@ function buildItems(items) {
   return menu;
 }
 
+// --- the keyboard --------------------------------------------------------------
+//
+// Menus used to open on hover only. Now, as in any desktop menu bar:
+// Down/Enter/Space on a menu opens it; Up/Down/Home/End move through its
+// items; Right opens a submenu, or moves to the next menu; Left closes a
+// submenu, or moves to the previous menu; Escape backs out one level.
+
+let roots = [];
+
+const itemsOf = (menu) => [...menu.children].filter(
+  (el) => el.classList.contains("item") && !el.disabled);
+
+function openSub(entry) {
+  const sub = entry.querySelector(":scope > .menu");
+  sub.hidden = false;
+  entry.classList.add("open");
+  itemsOf(sub)[0]?.focus();
+}
+
+function closeSub(entry) {
+  entry.querySelector(":scope > .menu").hidden = true;
+  entry.classList.remove("open");
+  entry.focus();
+}
+
+function openAndFocus(root) {
+  openMenu(root);
+  itemsOf(root.menu)[0]?.focus();
+}
+
+function onMenuKey(e) {
+  const at = roots.findIndex((r) => r.button === e.target || r.menu.contains(e.target));
+  if (at < 0) return;
+  const root = roots[at];
+  const neighbour = (step) => roots[(at + step + roots.length) % roots.length];
+  let handled = true;
+
+  if (e.target === root.button) {
+    if (["ArrowDown", "Enter", " "].includes(e.key)) openAndFocus(root);
+    else if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+      const next = neighbour(e.key === "ArrowRight" ? 1 : -1);
+      if (openRoot) openAndFocus(next); else next.button.focus();
+    } else handled = false;
+  } else {
+    const menu = e.target.closest(".menu");
+    const list = itemsOf(menu);
+    const i = list.indexOf(e.target);
+    const inSub = menu !== root.menu;
+    const hasSub = e.target.classList.contains("has-sub");
+    switch (e.key) {
+      case "ArrowDown": list[(i + 1) % list.length]?.focus(); break;
+      case "ArrowUp": list[(i - 1 + list.length) % list.length]?.focus(); break;
+      case "Home": list[0]?.focus(); break;
+      case "End": list[list.length - 1]?.focus(); break;
+      case "ArrowRight":
+        if (hasSub) openSub(e.target); else openAndFocus(neighbour(1));
+        break;
+      case "ArrowLeft":
+        if (inSub) closeSub(menu.parentElement); else openAndFocus(neighbour(-1));
+        break;
+      case "Enter": case " ":
+        if (hasSub) openSub(e.target); else handled = false;   // a button clicks itself
+        break;
+      case "Escape":
+        if (inSub) closeSub(menu.parentElement);
+        else { closeMenus(); root.button.focus(); }
+        break;
+      default: handled = false;
+    }
+  }
+  if (handled) {
+    e.preventDefault();
+    e.stopPropagation();
+  }
+}
+
 export function buildMenus(bar, providers) {
   closeMenus();
   clear(bar);
+  roots = [];
   for (const top of spec(providers)) {
     const button = h("button", { "aria-haspopup": "true", "aria-expanded": "false" }, top.label);
     const menu = buildItems(top.items);
@@ -138,6 +215,11 @@ export function buildMenus(bar, providers) {
     });
     button.addEventListener("mouseenter", () => { if (openRoot) openMenu(root); });
     bar.append(h("div", { class: "menu-root" }, button, menu));
+    roots.push(root);
+  }
+  if (!bar.dataset.keys) {
+    bar.addEventListener("keydown", onMenuKey);
+    bar.dataset.keys = "on";
   }
 }
 
