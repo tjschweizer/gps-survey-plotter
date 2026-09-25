@@ -243,7 +243,7 @@ class Server:
             "sources": [str(p) for p in st.sources],
             "project_path": str(st.project_path) if st.project_path else None,
             "suggested_project": suggested,
-            "layers": [{"name": name, "describe": ps.describe(),
+            "layers": [{"name": name, "describe": views.layer_summary(ps),
                         "visible": st.visible.get(name, True),
                         "active": name == st.active_layer}
                        for name, ps in st.layers.items()],
@@ -409,7 +409,10 @@ def create_app(state: AppState | None = None, *, vector_providers=None,
         with srv.acting():
             if st.surface is None:
                 return _json(None)
-            return _json(views.surface_grid(st.surface, st.site, cmap))
+            return _json(views.surface_grid(
+                st.surface, st.site, cmap,
+                datum=height_label(st.vertical, st.site, st.surface.z_column,
+                                   short=True)))
 
     @app.get("/api/basemap.png")
     def get_basemap(name: str):

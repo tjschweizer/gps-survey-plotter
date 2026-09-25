@@ -670,3 +670,16 @@ def test_success_is_a_toast_and_trouble_is_a_dialog(page, live):
     finally:
         with live.server.acting():
             live.state.clear_vertical()
+
+
+def test_the_3d_view_is_in_feet_on_a_named_datum(page):
+    page.click("#tabs button[data-tab='3d']")
+    page.wait_for_selector("#plot3d .main-svg", timeout=20000)
+    titles = page.evaluate("""() => {
+        const p = document.getElementById('plot3d');
+        return [p.layout.scene.xaxis.title.text, p.layout.scene.zaxis.title.text,
+                p.data[0].colorbar.title.text];
+    }""")
+    assert titles == ["east (ft)", "elevation (ft, raw ellipsoidal)",
+                      "elevation (ft, raw ellipsoidal)"]
+    page.click("#tabs button[data-tab='plan']")

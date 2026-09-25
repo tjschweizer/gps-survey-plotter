@@ -113,6 +113,7 @@ These were set by the owner and apply to every item.
 | After C13 | 418 passed, 51 skipped, 44 deselected | 39 passed |
 | After C14 | 418 passed, 51 skipped, 45 deselected | 40 passed (twice) |
 | After C15 | 419 passed, 51 skipped, 46 deselected | 41 passed |
+| After C16 | 420 passed, 51 skipped, 47 deselected | 42 passed |
 
 Of the 55 skips, 50 need real data. The other 5 are network tests that the
 sandbox proxy refused.
@@ -190,8 +191,8 @@ These answers change the designs in section 5.
 | 22 | A7 | Spot IDs on the map and in the datum dialog | UI | ✅ `50c887e` |
 | 23 | C13 | Status strip above the map | UI | ✅ `57efec7`, fix `1a623b9` |
 | 24 | C14 | Points drawn under the surface's weight | UI | ✅ `2b7d33e` |
-| 25 | C15 | Success reports stop being modal | UI | ✅ |
-| 26 | C16 | Consistent units in 2D, 3D and layers | UI | todo |
+| 25 | C15 | Success reports stop being modal | UI | ✅ `67b579a` |
+| 26 | C16 | Consistent units in 2D, 3D and layers | UI | ✅ |
 | 27 | C17 | Legend: ticks, marker key, no overlap | UI | todo |
 | 28 | C18 | Contrast, colour tokens, type and spacing scale | UI | todo |
 | 29 | C19 | Rod column second, in the table and the field sheet | UI | todo |
@@ -1022,7 +1023,16 @@ Evidence for these is in the review screenshots: synthetic export,
   dialogs.
 - **Breaking?:** no.
 
-**C16 — Consistent units**
+**C16 — Consistent units** ✅
+- **Done:** `views.surface_grid(..., datum=)` sends x, y and z in feet from
+  the local origin (all three, so the exaggeration stays true) plus `units`
+  and `datum` (short `height_label`); `view3d.js` titles the axes and the
+  colour bar "east (ft)", "elevation (ft, <datum>)" and hovers in ft. The
+  Layers panel uses the new `views.layer_summary` (heights in ft);
+  `PointSet.describe` is unchanged. QC residuals stay in cm. Tests:
+  `test_web_api.py::test_the_3d_grid_and_the_layers_are_in_feet`,
+  `test_web_browser.py::test_the_3d_view_is_in_feet_on_a_named_datum`; the
+  real-data `test_the_3d_grid_pairs_rows_with_northings` now expects feet.
 - **What:** the 3D axes and colour bar show ft, with the datum named. Layer
   summaries show ft. QC keeps cm for residuals. Files: `view3d.js`,
   `views.surface_grid`, and the layer payload in `server.py`. Don't change

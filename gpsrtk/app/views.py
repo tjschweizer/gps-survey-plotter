@@ -262,19 +262,24 @@ def surface_png(surface, cmap: str = "terrain") -> bytes:
     return _png(np.flipud(rgba))
 
 
-def surface_grid(surface, site, cmap: str = "terrain") -> dict:
+def surface_grid(surface, site, cmap: str = "terrain", datum: str = "") -> dict:
     """The surface for a 3D plot: local axes, heights, and a colour scale.
+
+    In feet from the local origin, like the plan view's legend, and with
+    the datum named: the 3D view used to say metres with no datum at all.
+    All three axes are feet, so the vertical exaggeration stays true.
 
     Heights keep NaN for unmeasured cells (sent as null), which a surface
     plot leaves as a hole - the same refusal to colour unsurveyed ground as
     the plan view.
     """
     from .. import terrain
+    from ..units import m_to_ft
 
     gx, gy = terrain.grid_axes(surface)
-    xs = np.asarray(site.to_local(gx, 0.0)[0]).round(3)
-    ys = np.asarray(site.to_local(0.0, gy)[1]).round(3)
-    z = surface.z_masked
+    xs = m_to_ft(np.asarray(site.to_local(gx, 0.0)[0])).round(3)
+    ys = m_to_ft(np.asarray(site.to_local(0.0, gy)[1])).round(3)
+    z = m_to_ft(surface.z_masked)
     finite = z[np.isfinite(z)]
     rows = [[None if not np.isfinite(v) else round(float(v), 4) for v in row]
             for row in z]
@@ -284,7 +289,39 @@ def surface_grid(surface, site, cmap: str = "terrain") -> dict:
         "zmax": float(finite.max()) if finite.size else 1.0,
         "colorscale": colorscale(cmap),
         "column": surface.z_column,
+        "units": "ft",
+        "datum": datum,
     }
+
+
+def layer_summary(ps) -> str:
+    """A layer's one-line summary for the Layers panel, heights in feet.
+
+    `PointSet.describe` stays in metres for the reports and tests that read
+    it; the page shows heights in feet everywhere else, so the panel does
+    too.
+    """
+    from ..model.pointset import FIX_FLOAT, FIX_RTK, elevation_column
+    from ..units import m_to_ft
+
+    d = ps.df
+    parts = [f"{len(d):,} points"]
+    if FIX in d:
+        vc = d[FIX].value_counts()
+        parts.append(f"fixed {int(vc.get(FIX_RTK, 0)):,} / "
+                     f"float {int(vc.get(FIX_FLOAT, 0)):,}")
+    if SESSION in d and len(d):
+        n_sessions = d[SESSION].astype(str).nunique()
+        if n_sessions > 1:
+            parts.append(f"{n_sessions} sessions")
+    if len(d):
+        values = d[elevation_column(ps)].dropna()
+        if len(values):
+            parts.append(f"z {m_to_ft(values.min()):.2f}-"
+                         f"{m_to_ft(values.max()):.2f} ft")
+        else:
+            parts.append("no height yet")
+    return "  |  ".join(parts)
 
 
 def colorscale(cmap: str, n: int = 16) -> list:

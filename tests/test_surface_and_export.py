@@ -39,7 +39,7 @@ def test_the_3d_grid_pairs_rows_with_northings(surf, site):
     assert g["x"] == sorted(g["x"]) and g["y"] == sorted(g["y"]), \
         "east and north both increase"
     x0, y0 = site.to_local(surf.extent.xmin, surf.extent.ymin)
-    assert (g["x"][0], g["y"][0]) == pytest.approx((x0, y0), abs=1e-3)
+    assert (g["x"][0], g["y"][0]) == pytest.approx((x0 / 0.3048, y0 / 0.3048), abs=1e-3)
 
     corners = {(0, 0): surf.z_masked[0, 0], (0, -1): surf.z_masked[0, -1],
                (-1, 0): surf.z_masked[-1, 0], (-1, -1): surf.z_masked[-1, -1]}
@@ -48,7 +48,7 @@ def test_the_3d_grid_pairs_rows_with_northings(surf, site):
         if np.isnan(expected):
             assert got is None, "unmeasured cells stay empty"
         else:
-            assert got == pytest.approx(expected, abs=1e-4)
+            assert got == pytest.approx(expected / 0.3048, abs=1e-4)
 
 
 def test_world_file_points_at_the_north_west_pixel_centre(surf):

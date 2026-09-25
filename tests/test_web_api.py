@@ -818,3 +818,24 @@ def test_a_solve_with_something_to_act_on_is_a_warning(client, synthetic_outing2
     reply = post(client, "/api/vertical/solve", {"mode": "ellipsoidal"})
     assert reply["notice"]["level"] == "warning"
     assert "cannot be tied" in reply["notice"]["text"]
+
+
+def test_the_3d_grid_and_the_layers_are_in_feet(client, state):
+    """The 2D legend is in feet; the 3D view and the layer list said metres,
+    and the 3D view named no datum."""
+    g = client.get("/api/surface/grid").json()
+    assert g["units"] == "ft" and g["datum"] == "raw ellipsoidal"
+    finite = [v for row in g["z"] for v in row if v is not None]
+    zmin_m = float(np.nanmin(state.surface.z_masked))
+    assert min(finite) == pytest.approx(zmin_m / 0.3048, abs=1e-3)
+    assert g["x"][1] - g["x"][0] == pytest.approx(
+        (state.surface.extent.width / (state.surface.z.shape[1] - 1)) / 0.3048, abs=1e-3)
+
+    layers = {ly["name"]: ly["describe"] for ly in client.get("/api/state").json()["layers"]}
+    assert layers["track_points"].endswith(" ft")
+    assert " m" not in layers["track_points"]
+    # The reports keep metres.
+    assert state.layers["track_points"].describe().endswith(" m")
+
+    post(client, "/api/vertical/solve", {"mode": "local"})
+    assert client.get("/api/surface/grid").json()["datum"] == "local datum"

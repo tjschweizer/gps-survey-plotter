@@ -102,12 +102,12 @@ export async function render() {
     colorscale: grid.colorscale,
     cmin: grid.zmin, cmax: grid.zmax,
     connectgaps: false,
-    // Relief here is barely a metre, so ticks need two decimals to say
-    // anything at all.
-    colorbar: { title: { text: "elevation (m)", side: "right" }, tickformat: ".2f",
+    // Relief here is a few feet, so ticks need two decimals to say anything
+    // at all. Feet throughout, like the plan view's legend.
+    colorbar: { title: { text: `elevation (ft, ${grid.datum})`, side: "right" }, tickformat: ".2f",
                 len: 0.6, thickness: 14, x: 0.94 },
     lighting: { ambient: 0.35, diffuse: 0.7, specular: 0.15, roughness: 0.6 },
-    hovertemplate: "E %{x:.2f} m<br>N %{y:.2f} m<br>%{z:.3f} m<extra></extra>",
+    hovertemplate: "E %{x:.2f} ft<br>N %{y:.2f} ft<br>%{z:.3f} ft<extra></extra>",
   };
   const layout = {
     margin: { l: 0, r: 0, t: 0, b: 0 },
@@ -117,9 +117,9 @@ export async function render() {
       uirevision: `camera-${cameraRevision}`,
       aspectmode: "manual",
       aspectratio: { x: 1, y: yr / xr, z: (zr * exaggeration) / xr },
-      xaxis: { title: { text: "east (m)" } },
-      yaxis: { title: { text: "north (m)" } },
-      zaxis: { title: { text: "elevation (m)" }, tickformat: ".2f" },
+      xaxis: { title: { text: "east (ft)" } },
+      yaxis: { title: { text: "north (ft)" } },
+      zaxis: { title: { text: `elevation (ft, ${grid.datum})` }, tickformat: ".2f" },
       camera: DEFAULT_CAMERA,
     },
   };
