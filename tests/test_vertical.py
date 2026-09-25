@@ -469,3 +469,19 @@ def test_a_benchmark_typed_as_a_number_is_still_a_sw_maps_id(state):
     assert state.site.vertical.benchmark_point_id == 7
     with pytest.raises(ValueError, match="not a point id"):
         state.set_datum_tie(point="BM9", elev_ft=100.0)
+
+
+def test_differences_added_in_bulk_solve_the_same():
+    """The offset solve adds its rows in bulk; the answer is the same."""
+    one, many = LeastSquares(), LeastSquares()
+    rows = [("b", "a", 1.0), ("c", "b", 2.0), ("c", "a", 3.1)]
+    for p, m, v in rows:
+        one.add({p: 1.0, m: -1.0}, v)
+    many.add_differences([r[0] for r in rows], [r[1] for r in rows],
+                         [r[2] for r in rows])
+    for ls in (one, many):
+        ls.constrain("a", 0.0)
+    a, b = one.solve(), many.solve()
+    assert a.values == pytest.approx(b.values)
+    assert a.dof == b.dof == 1
+    assert len(many.components()) == 1

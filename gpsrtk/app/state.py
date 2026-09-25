@@ -158,6 +158,11 @@ class AppState:
         # edit that does not touch them does not trigger a re-solve.
         self._solved_plan: str | None = None
 
+        # Crossover pairs of the point sets the readouts describe, held with
+        # the set itself so that a new set can never be mistaken for an old
+        # one that happened to live at the same address.
+        self._pairs: list[tuple[PointSet, object]] = []
+
         # View settings (colour map, layer toggles) as last saved or opened.
         # The state does not use them; it carries them so that a project
         # reopens looking the way it was left.
@@ -384,6 +389,22 @@ class AppState:
                 f"Only {len(self.result)} points survive the chain - "
                 "too few to grid.")
         self.resultChanged.emit()
+
+    def crossover_pairs(self, ps: PointSet):
+        """`qc.crossover_pairs` of `ps` (30 cm, 60 s), found once per set.
+
+        The QC readout and the Sessions panel both need them, for the same
+        points, and the neighbour search is the expensive part of either.
+        """
+        from .. import qc
+
+        for cached, pairs in self._pairs:
+            if cached is ps:
+                return pairs
+        pairs = qc.crossover_pairs(ps)
+        # `result` and `corrected` are the only sets asked about.
+        self._pairs = [(ps, pairs)] + self._pairs[:1]
+        return pairs
 
     def figure_surface(self, cell_m: float = FIGURE_CELL_M) -> Surface | None:
         """A surface for printed maps, gridded at about `cell_m` per pixel.

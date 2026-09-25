@@ -393,8 +393,9 @@ def session_offsets(ps: PointSet, *, radius_m: float = 0.5,
                                min_seconds=min_seconds, column=column)
 
     ls = LeastSquares()
-    for a, b, dz in zip(obs.a, obs.b, obs.dz):
-        ls.add({f"OFF:{b}": 1.0, f"OFF:{a}": -1.0}, dz, label=f"{a}~{b}")
+    ls.add_differences([f"OFF:{b}" for b in obs.b],
+                       [f"OFF:{a}" for a in obs.a], obs.dz,
+                       labels=[f"{a}~{b}" for a, b in zip(obs.a, obs.b)])
     counts = obs.counts()
 
     # Every session needs a column even if it never overlapped anything, so

@@ -61,6 +61,18 @@ def crossover_diffs(ps: PointSet, radius_m: float = 0.30,
     return z[pairs[:, 0]] - z[pairs[:, 1]]
 
 
+def pair_diffs(ps: PointSet, pairs: np.ndarray, column: str = Z) -> np.ndarray:
+    """`crossover_diffs` from pairs already found, so one neighbour search
+    can serve every readout that needs it. Pairs with no height at either
+    end are dropped, which is what searching only the rows with a height
+    would have found."""
+    if len(pairs) == 0 or column not in ps.df.columns:
+        return np.empty(0)
+    z = ps.df[column].to_numpy(dtype=float)
+    dz = z[pairs[:, 0]] - z[pairs[:, 1]]
+    return dz[np.isfinite(dz)]
+
+
 def summarise(dz: np.ndarray) -> dict:
     """RMS, median and p95 of absolute differences, and their mean. Metres."""
     dz = np.asarray(dz, dtype=float)
@@ -83,7 +95,8 @@ def crossover_stats(ps: PointSet, radius_m: float = 0.30,
 
 
 def session_crossovers(ps: PointSet, radius_m: float = 0.30,
-                       min_seconds: float = 60.0, column: str = Z) -> dict:
+                       min_seconds: float = 60.0, column: str = Z,
+                       pairs: np.ndarray | None = None) -> dict:
     """Crossover residuals split by acquisition session.
 
     Pooling every outing into one RMS hides which outing is good and which
@@ -99,13 +112,23 @@ def session_crossovers(ps: PointSet, radius_m: float = 0.30,
 
     Rows with no height in `column` are left out: a laser rod shot has no
     GNSS height and can never be half of a crossover.
+
+    `pairs`, when given, are `crossover_pairs` of `ps` found already with
+    the same radius and separation; they are reused rather than searched
+    for again.
     """
     out: dict = {"within": {}, "between": {}}
     d = ps.df
     if SESSION not in d.columns or len(d) < 2:
         return out
     if column in d.columns:
-        ps = ps.select(np.isfinite(d[column].to_numpy(dtype=float)), f"has {column}")
+        finite = np.isfinite(d[column].to_numpy(dtype=float))
+        if pairs is not None:
+            # Renumber the pairs onto the rows that survive.
+            keep = finite[pairs[:, 0]] & finite[pairs[:, 1]]
+            new_index = np.cumsum(finite) - 1
+            pairs = new_index[pairs[keep]]
+        ps = ps.select(finite, f"has {column}")
         d = ps.df
     names = d[SESSION].astype(str).to_numpy()
     for name in sorted(set(names)):
@@ -113,7 +136,8 @@ def session_crossovers(ps: PointSet, radius_m: float = 0.30,
     if len(d) < 2 or column not in d.columns:
         return out
 
-    pairs = crossover_pairs(ps, radius_m, min_seconds)
+    if pairs is None:
+        pairs = crossover_pairs(ps, radius_m, min_seconds)
     if len(pairs) == 0:
         return out
     z = d[column].to_numpy(dtype=float)

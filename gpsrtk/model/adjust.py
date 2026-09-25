@@ -153,6 +153,27 @@ class LeastSquares:
             for nm in names[1:]:
                 self._uf.union(names[0], nm)
 
+    def add_differences(self, plus, minus, values, weight: float = 1.0,
+                        labels=None) -> None:
+        """Many `x[plus] - x[minus] = value` rows at once.
+
+        The session-offset solve adds one per overlap observation; building
+        each as its own call, and joining the same two unknowns thousands
+        of times over, was most of its cost.
+        """
+        plus = [str(p) for p in plus]
+        minus = [str(m) for m in minus]
+        values = [float(v) for v in values]
+        labels = (list(labels) if labels is not None
+                  else [f"{m}~{p}" for p, m in zip(plus, minus)])
+        self._rows.extend({p: 1.0, m: -1.0} for p, m in zip(plus, minus))
+        self._values.extend(values)
+        self._weights.extend([float(weight)] * len(values))
+        self._labels.extend(labels)
+        self._kinds.extend(["obs"] * len(values))
+        for p, m in set(zip(plus, minus)):
+            self._uf.union(p, m)
+
     def constrain(self, name: str, value: float, weight: float = 1e6) -> None:
         """Hold an unknown at a value. This is what supplies the datum."""
         self.add({name: 1.0}, value, weight, label=f"constraint {name}",

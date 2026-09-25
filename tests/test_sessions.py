@@ -190,3 +190,37 @@ def test_the_comparison_survives_save_and_reopen(merged, tmp_path):
     assert other.surface_from_shown
     assert (other.result.df["z_ellip_m"].to_numpy() == before).all()
     assert project.view["colormap"] == "viridis"
+
+
+# --- one neighbour search for every readout ---------------------------------------
+
+def test_the_readouts_share_one_neighbour_search(merged, monkeypatch):
+    """The QC text and the Sessions panel describe the same points, and the
+    neighbour search is the expensive part of both. It runs once."""
+    from gpsrtk.web import create_app
+
+    calls = []
+    real = qc.crossover_pairs
+    monkeypatch.setattr(qc, "crossover_pairs",
+                        lambda *a, **k: calls.append(1) or real(*a, **k))
+    merged.solve_vertical("ellipsoidal")
+    create_app(merged).state.server.snapshot()
+    assert len(calls) == 1
+
+
+def test_shared_pairs_give_the_same_numbers(merged):
+    """Reusing the pairs must not move a single figure."""
+    merged.solve_vertical("ellipsoidal")
+    ps = merged.result
+    fresh = qc.format_stats(qc.crossover_stats(ps, column="elev_m"))
+    assert fresh in report.qc_text(merged)
+
+    payload = sessions_payload(merged)
+    for column in ("elev_m", "z_ellip_m"):
+        expected = qc.session_crossovers(merged.corrected, column=column)
+        shared = qc.session_crossovers(merged.corrected, column=column,
+                                       pairs=merged.crossover_pairs(merged.corrected))
+        assert shared == expected
+    within = qc.session_crossovers(merged.corrected, column="elev_m")["within"]
+    for row in payload["list"]:
+        assert row["pairs"] == within[row["name"]]["n"]

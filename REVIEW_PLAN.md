@@ -101,6 +101,7 @@ These were set by the owner and apply to every item.
 | After C25 | 363 passed, 51 skipped, 40 deselected | 35 passed |
 | After C6 | 365 passed, 51 skipped, 40 deselected | 35 passed |
 | After O1 | 367 passed, 51 skipped, 40 deselected | 35 passed |
+| After O2 | 370 passed, 51 skipped, 40 deselected | 35 passed |
 
 Of the 55 skips, 50 need real data. The other 5 are network tests that the
 sandbox proxy refused.
@@ -165,8 +166,8 @@ These answers change the designs in section 5.
 | 9 | C2 | Station identities: plan shots vs SW Maps records | processing | ✅ `37b38bb` (**meaning changed**) |
 | 10 | C25 | Split sessions where the data proves a mount change | processing | ✅ `0817709` (**session names change**) |
 | 11 | C6 | One overlap definition for the merge report and the solve | processing | ✅ `06f3c15` |
-| 12 | O1 | Session offsets from cell differences | processing | ✅ |
-| 13 | O2 | Compute crossovers and slope once | code health | todo |
+| 12 | O1 | Session offsets from cell differences | processing | ✅ `42425eb` |
+| 13 | O2 | Compute crossovers and slope once | code health | ✅ |
 | 14 | O3 | Filter-chain cache keyed by a token | code health | todo |
 | 15 | C3 | Heights labelled by vertical model | processing | todo |
 | 16 | A6 | Source fingerprints | code health | todo |
@@ -567,7 +568,26 @@ updating after a local run. Report that; don't guess.
 - **Breaking?:** a re-solve may shift offsets by a few mm. Stored models are
   unchanged.
 
-**O2 — Compute crossovers and slope once**
+**O2 — Compute crossovers and slope once** ✅
+- **Done:** `AppState.crossover_pairs(ps)` caches `qc.crossover_pairs`
+  (30 cm, 60 s) per point-set object, holding the object so an address can
+  never be reused, for the last two sets (`result`, `corrected`).
+  `report.qc_text(state, slope=None)` summarises `qc.pair_diffs` of those
+  pairs; `qc.session_crossovers` gained `pairs=` (renumbered onto the rows
+  with a height), used by `sessions_payload` for both columns. The server's
+  QC cache passes `slope_field()` to `qc_text`, so `terrain_line` reuses
+  it. `qc.crossover_stats` itself is untouched. The solver's rows are
+  added by `LeastSquares.add_differences`, a bulk call that also joins each
+  pair of unknowns once rather than once per row. (After O1 there are
+  thousands of observations, not millions, so this matters less than the
+  review expected.)
+- **Numbers:** a snapshot now runs one neighbour search, not three. On the
+  merged synthetic set (15,330 points) the QC text plus the Sessions panel,
+  cold, went from 0.070 s to 0.055 s; the synthetic set is sparse (~3 Hz),
+  and at 10 Hz the search dominates more.
+- **Tests:** `test_sessions.py::test_the_readouts_share_one_neighbour_search`
+  (counts calls), `::test_shared_pairs_give_the_same_numbers`,
+  `test_vertical.py::test_differences_added_in_bulk_solve_the_same`.
 - **What:** crossover pairs are cached once per `result` object and revision,
   and shared by `report.qc_text` (`report.py:97`) and `app/sessions.py:45-49`.
   Build the solver's observation rows with array operations instead of a

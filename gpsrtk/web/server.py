@@ -210,7 +210,8 @@ class Server:
         rev = self.state.revisions
         key = (rev["result"], rev["site"], id(self.state.result))
         if self._qc[0] != key:
-            self._qc = (key, report.qc_text(self.state))
+            slope = self.slope_field() if self.state.surface is not None else None
+            self._qc = (key, report.qc_text(self.state, slope))
         return self._qc[1]
 
     def snapshot(self) -> dict:

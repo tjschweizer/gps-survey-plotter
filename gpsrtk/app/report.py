@@ -13,7 +13,7 @@ from __future__ import annotations
 import numpy as np
 
 from .. import qc
-from ..model.pointset import ELEV, SESSION
+from ..model.pointset import ELEV, SESSION, Z
 from ..units import m_to_ft
 
 UNSOLVED = (
@@ -82,20 +82,21 @@ def solve_notice(model) -> str:
 
 # --- the QC readout ----------------------------------------------------------------
 
-def qc_text(state) -> str:
+def qc_text(state, slope=None) -> str:
     """Measured QC for what is on screen.
 
     Not an afterthought - measured QC beats the receiver's own accuracy
     estimates, so crossover statistics belong next to the surface they
-    describe rather than in a log file somewhere.
+    describe rather than in a log file somewhere. The crossover pairs are
+    the state's, shared with the Sessions panel; `slope` is the surface's
+    slope field when the caller already has it.
     """
     ps = state.result
     if ps is None or len(ps) < 2:
         return ""
 
-    column = ELEV if ps.has(ELEV) else None
-    stats = (qc.crossover_stats(ps, column=column) if column
-             else qc.crossover_stats(ps))
+    column = ELEV if ps.has(ELEV) else Z
+    stats = qc.summarise(qc.pair_diffs(ps, state.crossover_pairs(ps), column))
     lines = [
         "Measured QC — crossover residuals (pairs within 30 cm, >60 s apart)",
         "  " + qc.format_stats(stats),
@@ -129,7 +130,7 @@ def qc_text(state) -> str:
         lines.append(
             f"Heights   {m_to_ft(lo):.2f} – {m_to_ft(hi):.2f} ft   "
             f"relief {m_to_ft(hi - lo) * 12:.1f} in   [{datum}]")
-        terrain = terrain_line(s)
+        terrain = terrain_line(s, slope)
         if terrain:
             lines.append(terrain)
     return "\n".join(lines)
@@ -257,11 +258,11 @@ def figure_note(state) -> str:
     return " · ".join(b for b in bits if b)
 
 
-def terrain_line(surface) -> str:
+def terrain_line(surface, slope=None) -> str:
     """Slope and mapped area, for the QC readout."""
     from .. import terrain
 
-    stats = terrain.slope(surface).stats()
+    stats = (slope if slope is not None else terrain.slope(surface)).stats()
     if not stats.get("n"):
         return ""
     return (f"Terrain   slope median {stats['median']:.1f}%, "

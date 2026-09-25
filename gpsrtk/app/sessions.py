@@ -42,11 +42,14 @@ def sessions_payload(state) -> dict:
 
     column = ELEV if corrected is not None and corrected.has(ELEV) else Z
     empty = {"within": {}, "between": {}}
-    crossovers = (qc.session_crossovers(corrected, column=column)
+    # One neighbour search, shared with the QC readout.
+    found = (state.crossover_pairs(corrected) if corrected is not None
+             else None)
+    crossovers = (qc.session_crossovers(corrected, column=column, pairs=found)
                   if corrected is not None else empty)
     # The raw antenna heights say how far apart the outings were logged;
     # the corrected ones say what is left after the vertical model.
-    raw = (qc.session_crossovers(corrected, column=Z)
+    raw = (qc.session_crossovers(corrected, column=Z, pairs=found)
            if corrected is not None and column != Z else crossovers)
     kept = (corrected.df[SESSION].astype(str).value_counts().to_dict()
             if corrected is not None and SESSION in corrected.df.columns else {})
