@@ -61,6 +61,7 @@ from ..io.imagery import NoCoverageError
 from ..io.vector import default_vector_providers
 from ..project import SUFFIX as PROJECT_SUFFIX
 from ..units import m_to_ft
+from ..vertical import height_label
 from . import files
 
 STATIC = Path(__file__).parent / "static"
@@ -832,13 +833,16 @@ def create_app(state: AppState | None = None, *, vector_providers=None,
                 if surface is None:
                     raise UserError("Export failed", "Too few points to grid.",
                                     "warning")
+                tag = report.filter_tag(st.chain)
+                datum = height_label(st.vertical, st.site, surface.z_column)
                 with tempfile.TemporaryDirectory() as tmp:
-                    result = write_heightmap(surface, tmp, tag="_fixed")
+                    result = write_heightmap(surface, tmp, tag=f"_{tag}",
+                                             datum=datum)
                     data = _zip_dir(tmp)
             st.statusMessage.emit(f"Wrote {result['paths']['png16'].name}")
-            download = srv.offer("heightmap_fixed.zip", data, "application/zip")
+            download = srv.offer(f"heightmap_{tag}.zip", data, "application/zip")
             return srv.reply(notice("Heightmap written",
-                                    report.heightmap_notice(surface)),
+                                    report.heightmap_notice(surface, datum)),
                              download=download)
 
     @app.post("/api/export/revit")
@@ -853,9 +857,10 @@ def create_app(state: AppState | None = None, *, vector_providers=None,
                     st.site).apply(st.result)
                 with tempfile.TemporaryDirectory() as tmp:
                     result = write_points(binned, st.site,
-                                          Path(tmp) / "revit_points_ft.csv")
+                                          Path(tmp) / "revit_points_ft.csv",
+                                          vertical=st.vertical)
                     data = _zip_dir(tmp)
-            text, raw = report.revit_notice(result, st.site)
+            text, raw = report.revit_notice(result, st.site, st.vertical)
             download = srv.offer("revit_points_ft.zip", data, "application/zip")
             return srv.reply(notice("Revit points written", text,
                                     "warning" if raw else "info"),

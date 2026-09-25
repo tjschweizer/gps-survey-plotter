@@ -28,8 +28,12 @@ UINT16_MAX = 65535
 
 def write_heightmap(surface: Surface, outdir: str | Path, *,
                     tag: str = "", preview: bool = True,
-                    vert_exag: float = 4.0) -> dict:
-    """Write the 16-bit heightmap, world file, mask, preview, and INFO."""
+                    vert_exag: float = 4.0, datum: str = "") -> dict:
+    """Write the 16-bit heightmap, world file, mask, preview, and INFO.
+
+    `datum` says what the heights are ("local datum, ARBITRARY origin",
+    "ELLIPSOIDAL antenna height, ..."), for the INFO file.
+    """
     outdir = Path(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
     base = f"heightmap{tag}"
@@ -62,7 +66,7 @@ def write_heightmap(surface: Surface, outdir: str | Path, *,
 
     paths["info"] = outdir / f"{base}_INFO.txt"
     paths["info"].write_text(
-        _info_text(surface, zmin, zmax, span), encoding="utf-8")
+        _info_text(surface, zmin, zmax, span, datum), encoding="utf-8")
 
     return {"paths": paths, "zmin": zmin, "zmax": zmax,
             "measured_fraction": surface.measured_fraction}
@@ -83,9 +87,11 @@ def _write_preview(z_img, mask_img, px, path: Path, vert_exag: float) -> Path:
     return path
 
 
-def _info_text(surface: Surface, zmin: float, zmax: float, span: float) -> str:
+def _info_text(surface: Surface, zmin: float, zmax: float, span: float,
+               datum: str = "") -> str:
     site = surface.site
     crs = f"EPSG:{site.epsg}" if site else "unknown"
+    heights = f"{datum} ({surface.z_column})" if datum else surface.z_column
     return (
         "Heightmap\n"
         "=========\n"
@@ -94,7 +100,8 @@ def _info_text(surface: Surface, zmin: float, zmax: float, span: float) -> str:
         f"ground sample dist: {surface.px * 100:.2f} cm/pixel\n"
         f"extent            : {surface.extent.width:.2f} x "
         f"{surface.extent.height:.2f} m\n"
-        f"CRS               : {crs}\n\n"
+        f"CRS               : {crs}\n"
+        f"heights           : {heights}\n\n"
         f"grey 0     = {zmin:.4f} m\n"
         f"grey 65535 = {zmax:.4f} m\n"
         f"vertical range     = {span:.4f} m\n"

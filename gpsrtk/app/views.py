@@ -365,6 +365,7 @@ def terrain_payload(state, field=None) -> dict | None:
     """Numbers the plan view's legend and the terrain controls need."""
     from .. import terrain
     from ..units import m_to_ft
+    from ..vertical import height_label
 
     s = state.surface
     if s is None:
@@ -374,13 +375,7 @@ def terrain_payload(state, field=None) -> dict | None:
     measured = s.z[~s.mask]
     lo, hi = (np.percentile(measured, [0.5, 99.5]) if measured.size
               else (low, high))
-    v = state.site.vertical
-    if s.z_column != ELEV:
-        datum = "raw ellipsoidal"
-    elif v.tied_to_model:
-        datum = f"tied to {v.model_frame}"
-    else:
-        datum = "local datum"
+    datum = height_label(state.vertical, state.site, s.z_column, short=True)
     return {
         "relief_cm": (high - low) * 100.0,
         "mapped_m2": terrain.mapped_area_m2(s),

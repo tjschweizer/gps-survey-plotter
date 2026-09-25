@@ -607,6 +607,40 @@ class VerticalModel:
         return "\n".join(lines)
 
 
+def height_label(model: VerticalModel | None, site, z_column: str, *,
+                 short: bool = False) -> str:
+    """What the heights in `z_column` are, in words, from the model's mode.
+
+    "Is there an elevation column" is not the question: after "Solve session
+    offsets only" there is one, and it holds ellipsoidal ANTENNA heights near
+    860 ft, which a label of "local datum" would pass off as ground on the
+    site datum. So the words follow the mode:
+
+      no model / raw   raw ellipsoidal antenna height
+      ellipsoidal      ellipsoidal antenna height, session offsets applied
+      navd88           NAVD88 orthometric, antenna height
+      local            tied to the model frame, or local and arbitrary -
+                       unless no tie could be made (no datum shift), when
+                       the heights are still the ellipsoidal ones
+    """
+    v = site.vertical
+    mode = model.mode if model is not None else None
+    if z_column != ELEV or model is None:
+        return ("raw ellipsoidal" if short
+                else "RAW ELLIPSOIDAL antenna height (no vertical model)")
+    if mode == "local" and not model.datum_shift_m:
+        mode = "ellipsoidal"                 # solved, but never tied
+    if mode == "ellipsoidal":
+        return ("ellipsoidal, offsets applied" if short
+                else "ELLIPSOIDAL antenna height, session offsets applied")
+    if mode == "navd88":
+        return ("NAVD88 antenna height" if short
+                else "NAVD88 orthometric, antenna height")
+    if v.tied_to_model:
+        return f"tied to {v.model_frame}"
+    return "local datum" if short else "local datum, ARBITRARY origin"
+
+
 def solve_vertical(tracks: PointSet, spots: PointSet | None = None, *,
                    mode: str = "local",
                    benchmark_id: int | str = 1,

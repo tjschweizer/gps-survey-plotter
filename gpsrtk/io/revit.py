@@ -40,7 +40,8 @@ POINT_WARNING_THRESHOLD = 30_000
 def write_points(ps: PointSet, site: Site, path: str | Path, *,
                  units: str = "feet",
                  z_column: str | None = None,
-                 describe: bool = False) -> dict:
+                 describe: bool = False,
+                 vertical=None) -> dict:
     """Write a Revit points file plus its origin sidecar.
 
     Elevation comes from the derived elevation column when a vertical model has
@@ -68,8 +69,8 @@ def write_points(ps: PointSet, site: Site, path: str | Path, *,
 
     out.to_csv(path, index=False, header=False)
     sidecar = path.with_name(path.stem + "_ORIGIN.txt")
-    sidecar.write_text(_sidecar_text(site, units, len(out), z_column),
-                       encoding="utf-8")
+    sidecar.write_text(_sidecar_text(site, units, len(out), z_column,
+                                     vertical), encoding="utf-8")
 
     return {
         "path": path,
@@ -83,12 +84,21 @@ def write_points(ps: PointSet, site: Site, path: str | Path, *,
     }
 
 
-def _sidecar_text(site: Site, units: str, n: int, z_column: str) -> str:
+def _sidecar_text(site: Site, units: str, n: int, z_column: str,
+                  vertical=None) -> str:
+    from ..vertical import height_label
+
     v = site.vertical
+    label = height_label(vertical, site, z_column)
     if z_column == Z:
         datum = ("RAW ELLIPSOIDAL HEIGHT - no vertical model applied.\n"
                  "                        These are antenna heights above the\n"
                  "                        ellipsoid, not ground elevations.")
+    elif "antenna" in label:
+        datum = (f"{label}.\n"
+                 "                        These are heights of the antenna,\n"
+                 "                        not ground elevations on the site\n"
+                 "                        datum. Solve the local datum first.")
     elif v.tied_to_model:
         datum = f"tied to {v.model_frame}"
     else:

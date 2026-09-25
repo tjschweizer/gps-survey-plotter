@@ -102,6 +102,7 @@ These were set by the owner and apply to every item.
 | After C6 | 365 passed, 51 skipped, 40 deselected | 35 passed |
 | After O1 | 367 passed, 51 skipped, 40 deselected | 35 passed |
 | After O2 | 370 passed, 51 skipped, 40 deselected | 35 passed |
+| After O3, C3 | 376 passed, 51 skipped, 40 deselected | 35 passed |
 
 Of the 55 skips, 50 need real data. The other 5 are network tests that the
 sandbox proxy refused.
@@ -168,8 +169,8 @@ These answers change the designs in section 5.
 | 11 | C6 | One overlap definition for the merge report and the solve | processing | ✅ `06f3c15` |
 | 12 | O1 | Session offsets from cell differences | processing | ✅ `42425eb` |
 | 13 | O2 | Compute crossovers and slope once | code health | ✅ `1a20e3b` |
-| 14 | O3 | Filter-chain cache keyed by a token | code health | ✅ |
-| 15 | C3 | Heights labelled by vertical model | processing | todo |
+| 14 | O3 | Filter-chain cache keyed by a token | code health | ✅ `e03aedc` |
+| 15 | C3 | Heights labelled by vertical model | processing | ✅ |
 | 16 | A6 | Source fingerprints | code health | todo |
 | 17 | A2 | Fill plan shots from SW Maps records by station | workflow | todo |
 | 18 | A4 | Per-setup level closure and laser check | workflow | todo |
@@ -613,7 +614,24 @@ updating after a local run. Report that; don't guess.
 - **Verify:** a unit test that replaces the source with an equal-sized new one.
 - **Breaking?:** no.
 
-**C3 — Heights labelled by vertical model**
+**C3 — Heights labelled by vertical model** ✅
+- **Done:** `vertical.height_label(model, site, z_column, short=False)` is
+  the one wording: raw → "RAW ELLIPSOIDAL antenna height (no vertical
+  model)" / "raw ellipsoidal"; ellipsoidal → "ELLIPSOIDAL antenna height,
+  session offsets applied" / "ellipsoidal, offsets applied"; navd88 →
+  "NAVD88 orthometric, antenna height"; local → "tied to <frame>" or "local
+  datum, ARBITRARY origin" / "local datum". A local model with no datum
+  shift (the tie could not be made) is labelled ellipsoidal, since that is
+  what its heights are. Used by the QC Heights line, the legend
+  (`views.terrain_payload`), the heightmap INFO (new "heights" line;
+  `write_heightmap(datum=)`) and notice, and the Revit notice and sidecar
+  (`write_points(vertical=)`, `revit_notice(res, site, vertical)`), which
+  now warn for antenna heights in any mode. The heightmap tag is
+  `report.filter_tag(chain)`: "fixed" when the stack keeps only fix 4,
+  otherwise "all". Tests: `test_web_api.py::test_offsets_only_heights_are_not_called_a_local_datum`
+  (the E4 scenario), `::test_a_local_solve_is_labelled_local_and_arbitrary`,
+  `::test_navd88_heights_say_they_are_of_the_antenna`,
+  `::test_the_heightmap_is_named_after_the_points_it_was_made_from`.
 - **What:** the label depends on the model's mode, not just on whether `ELEV`
   exists:
   - ellipsoidal → "ellipsoidal antenna height, session offsets applied";

@@ -13,6 +13,7 @@ from __future__ import annotations
 import numpy as np
 
 from .. import qc
+from ..vertical import height_label
 from ..model.pointset import ELEV, SESSION, Z
 from ..units import m_to_ft
 
@@ -112,13 +113,7 @@ def qc_text(state, slope=None) -> str:
 
     s = state.surface
     if s is not None:
-        v = state.site.vertical
-        if s.z_column != ELEV:
-            datum = "RAW ELLIPSOIDAL (no vertical model)"
-        elif v.tied_to_model:
-            datum = f"tied to {v.model_frame}"
-        else:
-            datum = "local datum, ARBITRARY origin"
+        datum = height_label(state.vertical, state.site, s.z_column)
         # nan-aware: masked cells are NaN and would poison plain min/max.
         lo = float(np.nanmin(s.z_masked))
         hi = float(np.nanmax(s.z_masked))
@@ -158,14 +153,21 @@ def info_bits(state) -> list[str]:
 
 # --- after an export ---------------------------------------------------------------------
 
-def revit_notice(res: dict, site) -> tuple[str, bool]:
+def revit_notice(res: dict, site, vertical=None) -> tuple[str, bool]:
     """What to say after writing a Revit points file, and whether to warn."""
     notes = []
+    label = height_label(vertical, site, res["z_column"])
+    antenna = res["z_column"] != ELEV or "antenna" in label
     if res["z_column"] != ELEV:
         notes.append(
             "WARNING: no vertical model applied. These are raw ellipsoidal "
             "antenna heights (~860 ft), not elevations on the site datum. "
             "Solve the local datum before importing into Revit.")
+    elif antenna:
+        notes.append(
+            f"WARNING: these are {label} - heights of the antenna, not ground "
+            "elevations on the site datum. Solve the local datum before "
+            "importing into Revit.")
     elif not site.vertical.tied_to_model:
         notes.append(
             "NOTE: the datum is local and arbitrary. The elevations are "
@@ -177,15 +179,16 @@ def revit_notice(res: dict, site) -> tuple[str, bool]:
             "This many points will make Revit's importer very slow. "
             "Consider a larger bin cell.")
     text = (f"{res['n_points']:,} points\n"
-            f"Heights from: {res['z_column']}\n"
+            f"Heights: {label} ({res['z_column']})\n"
             f"Origin sidecar: {res['sidecar'].name}"
             + ("\n\n" + "\n\n".join(notes) if notes else ""))
-    return text, res["z_column"] != ELEV
+    return text, antenna
 
 
-def heightmap_notice(surface) -> str:
+def heightmap_notice(surface, datum: str = "") -> str:
     return (f"{surface.describe()}\n\n"
-            f"Heights from: {surface.z_column}\n\n"
+            f"Heights: {datum + ' (' if datum else ''}{surface.z_column}"
+            f"{')' if datum else ''}\n\n"
             "The 16-bit raster contains interpolated fill in unmeasured cells; "
             "the true mask is in the .npy alongside it.")
 
@@ -247,6 +250,19 @@ def filter_summary(chain) -> str:
         else:
             parts.append(stage.describe())
     return " · ".join(parts)
+
+
+def filter_tag(chain) -> str:
+    """"fixed" when the stack keeps only RTK fixed points, "all" otherwise.
+
+    The heightmap is named after it, as the archive scripts named theirs
+    (`--all` included float); it used to say "fixed" whatever was kept.
+    """
+    for stage in chain.stages:
+        if stage.enabled and stage.kind == "fix_select":
+            if sorted(int(v) for v in stage.values) == [4]:
+                return "fixed"
+    return "all"
 
 
 def figure_note(state) -> str:

@@ -540,6 +540,64 @@ def test_the_heightmap_is_a_download_of_every_file(client):
     assert "heightmap_fixed.pgw" in names
 
 
+def _zip_text(client, url, name):
+    r = client.get(url)
+    return zipfile.ZipFile(io.BytesIO(r.content)).read(name).decode("utf-8")
+
+
+def test_offsets_only_heights_are_not_called_a_local_datum(client, state):
+    """After "Solve session offsets only" the elevation column holds
+    ellipsoidal ANTENNA heights near 860 ft. They were labelled LOCAL
+    ARBITRARY in the Revit sidecar; every readout now says what they are."""
+    post(client, "/api/vertical/solve", {"mode": "ellipsoidal"})
+    label = "ELLIPSOIDAL antenna height, session offsets applied"
+    s = client.get("/api/state").json()
+    assert label in s["qc"]
+    assert s["terrain"]["elevation"]["datum"] == "ellipsoidal, offsets applied"
+
+    reply = post(client, "/api/export/revit")
+    assert reply["notice"]["level"] == "warning"
+    assert label in reply["notice"]["text"]
+    sidecar = _zip_text(client, reply["download"]["url"],
+                        "revit_points_ft_ORIGIN.txt")
+    assert label in sidecar and "LOCAL ARBITRARY" not in sidecar
+
+    reply = post(client, "/api/export/heightmap")
+    info = _zip_text(client, reply["download"]["url"], "heightmap_fixed_INFO.txt")
+    assert f"heights           : {label} (elev_m)" in info
+
+
+def test_a_local_solve_is_labelled_local_and_arbitrary(client):
+    post(client, "/api/vertical/solve", {"mode": "local"})
+    s = client.get("/api/state").json()
+    assert "[local datum, ARBITRARY origin]" in s["qc"]
+    assert s["terrain"]["elevation"]["datum"] == "local datum"
+    reply = post(client, "/api/export/revit")
+    assert "LOCAL ARBITRARY" in _zip_text(client, reply["download"]["url"],
+                                          "revit_points_ft_ORIGIN.txt")
+
+
+def test_navd88_heights_say_they_are_of_the_antenna(state):
+    from gpsrtk import vertical as V
+
+    model = state.solve_vertical(
+        "navd88", geoid=V.GeoidSeparation(value_m=-29.2, model="GEOID18"))
+    assert V.height_label(model, state.site, "elev_m") == \
+        "NAVD88 orthometric, antenna height"
+    assert V.height_label(None, state.site, "z_ellip_m", short=True) == \
+        "raw ellipsoidal"
+
+
+def test_the_heightmap_is_named_after_the_points_it_was_made_from(client, state):
+    """It said "fixed" whatever the filter stack kept."""
+    fix = next(s for s in state.chain.stages if s.kind == "fix_select")
+    fix.values = (4, 5)
+    state.recompute()
+    reply = post(client, "/api/export/heightmap")
+    assert reply["download"]["filename"] == "heightmap_all.zip"
+    assert "heightmap_all_16bit.png" in _zip_names(client, reply["download"]["url"])
+
+
 def test_the_field_sheet_opens_in_the_browser(client):
     post(client, "/api/plan/point/add", {"x": 12.0, "y": 15.0})
     reply = post(client, "/api/plan/fieldsheet")
