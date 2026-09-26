@@ -103,3 +103,22 @@ def test_refuses_something_else_with_the_extension(tmp_path):
         z.writestr("manifest.json", json.dumps({"format": "other", "version": 1}))
     with pytest.raises(ValueError, match="not a Yard Survey session"):
         read_any(path)
+
+
+def test_shots_without_a_position_are_kept(tmp_path):
+    """A turning point read under canopy has a rod reading and no position."""
+    path = write_yardsession(tmp_path / "tp.yardsession")
+    with zipfile.ZipFile(path) as z:
+        members = {n: z.read(n) for n in z.namelist()}
+    shots = pd.read_csv(zipfile.ZipFile(path).open("shots.csv"), dtype=str)
+    shots[["lat", "lon", "z_ellip_m", "hacc", "vacc"]] = ""
+    shots["fix"] = "0"
+    members["shots.csv"] = shots.to_csv(index=False).encode()
+    with zipfile.ZipFile(path, "w") as z:
+        for name, data in members.items():
+            z.writestr(name, data)
+
+    d = read_any(path)["shots"].df
+    assert len(d) == len(shots)
+    assert d[P.E].isna().all() and d[P.Z].isna().all()
+    assert d[P.ROD_IN].notna().all()

@@ -61,7 +61,7 @@ LAYERS = {
 # Columns the app names differently from this package.
 RENAMES = {"mark": STATION}
 
-EXTRA_NUMERIC = ("mono_ns", "avg_n", "avg_sd_m")
+EXTRA_NUMERIC = ("mono_ns", "avg_n", "avg_sd_m", "avg_sd_h_m")
 
 
 class YardSessionReader(SurveyReader):
@@ -132,7 +132,12 @@ def _finish(df: pd.DataFrame, tz: str, *, stem: str, source: str) -> pd.DataFram
         df[KIND] = normalise_kind(df[KIND])
     if Z not in df.columns:
         df[Z] = float("nan")
-    df[E], df[N] = _project(df[LAT], df[LON])
+    # A shot saved without a position (a turning point under canopy) is still
+    # a level-network reading; a layer of nothing else has no position at all.
+    if pd.to_numeric(df[LAT], errors="coerce").notna().any():
+        df[E], df[N] = _project(df[LAT], df[LON])
+    else:
+        df[E] = df[N] = float("nan")
     df[SOURCE] = source
     if TRACK not in df.columns or df[TRACK].isna().all():
         df[TRACK] = stem
