@@ -171,3 +171,64 @@ def write_export(path: str | Path, *, day: str = "2026-08-27 13:00:00",
             feat.insert(2, "Layer", "spots")
             z.writestr(f"{stem}_FEATURE_POINTS.csv", feat.to_csv(index=False))
     return path
+
+
+def write_yardsession(path: str | Path, *, day: str = "2026-08-27 13:00:00",
+                      tz: str = "America/Chicago", version: int = 1,
+                      shots: bool = True, seed: int = 0) -> Path:
+    """Write a `.yardsession` as the Yard Survey app exports it.
+
+    The same mower passes and lawn spots as `write_export`, in the app's
+    layout: canonical column names, WGS84 lat/lon, UTC epoch milliseconds, a
+    manifest naming the zone. `day` is local time in `tz`, as the SW Maps
+    writer's is, so the two can be compared directly.
+    """
+    import json
+
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    def utc_ms(local: pd.Series) -> pd.Series:
+        t = pd.to_datetime(local).dt.tz_localize(tz).dt.tz_convert("UTC")
+        return (t - pd.Timestamp("1970-01-01", tz="UTC")) // pd.Timedelta("1ms")
+
+    tp = track_points(day=day, seed=seed)
+    local = pd.to_datetime(tp["Time"].str.replace(" CDT", ""), format="%m/%d/%Y %H:%M:%S.%f")
+    track = pd.DataFrame({
+        "time_utc_ms": utc_ms(local),
+        "lat": tp["Lat"], "lon": tp["Lon"], "z_ellip_m": tp["Elevation"],
+        "fix": tp["Fix ID"], "hacc": tp["Horizontal Accuracy"],
+        "vacc": tp["Vertical Accuracy"], "speed": tp["Speed"],
+        "bearing": tp["Bearing"], "pdop": tp["PDOP"], "hdop": 0.6, "vdop": 1.0,
+        "sats_used": tp["Satellites in Use"], "age_diff_s": 0.8,
+        "ref_station": "0101", "baseline_m": 7378.0, "track": "session",
+        "mono_ns": range(len(tp)),
+    })
+
+    sp = spot_rows(day=str(pd.Timestamp(day) - pd.Timedelta(hours=1)))
+    sp_local = pd.to_datetime(sp["Time"].str.replace(" CDT", ""), format="%m/%d/%Y %H:%M:%S.%f")
+    shot_rows = pd.DataFrame({
+        "time_utc_ms": utc_ms(sp_local), "lat": sp["Latitude"],
+        "lon": sp["Longitude"], "z_ellip_m": sp["Elevation"], "fix": 4,
+        "hacc": 0.01, "vacc": 0.02, "station": [f"P{i}" for i in sp["ID"]],
+        "rod_text": sp["height number"].map(lambda v: f"{v:.2f}"),
+        "setup": sp["base position"].map(lambda s: "AB"[s]), "kind": "Lawn ",
+        "remarks": "", "avg_n": 50, "avg_sd_m": 0.004,
+    })
+    checks = shot_rows.iloc[:1].drop(columns=["station", "rod_text", "setup", "kind"])
+    checks.insert(7, "mark", "01")
+
+    manifest = {
+        "format": "yardsession", "version": version, "app_version": "test",
+        "session": path.stem, "session_uuid": "00000000-0000-0000-0000-000000000000",
+        "tz": tz, "mount": "MSM_NEAR", "track_points": len(track),
+    }
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("manifest.json", json.dumps(manifest))
+        z.writestr("track_points.csv", track.to_csv(index=False))
+        z.writestr("shots.csv", (shot_rows if shots else shot_rows.iloc[:0])
+                   .to_csv(index=False))
+        z.writestr("control_checks.csv", checks.to_csv(index=False))
+        z.writestr("raw/gnss.bin", b"\xd3\x00\x00")
+        z.writestr("raw/corrections.rtcm3", b"")
+    return path

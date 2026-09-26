@@ -97,8 +97,23 @@ file: a single point from a survey pins a property to the centimetre.
 
 ## Importing
 
-Two SW Maps formats are read, and the registry picks between them by content,
-not by trusting the extension:
+**`.yardsession` — the Yard Survey Android app.** The app that replaces SW Maps
+(repository `android-gps-survey`) exports each session as a zip: a
+`manifest.json` naming the format version, the session, its IANA time zone and
+the NTRIP mount point; `track_points.csv` at the receiver's full 10 Hz;
+`shots.csv` and `control_checks.csv` laid out like a field project's layers;
+and the session as recorded, including the receiver's raw stream (NMEA plus its
+own RTCM3 MSM7) and the caster's corrections. The CSVs already use this
+package's column names. Times are the receiver's UTC, converted to local time in
+the manifest's zone with each date's own daylight-saving rule; positions are
+lat/lon and projected as `.swmz` points are. Age of differential, reference
+station and baseline (from the caster's RTCM 1006) are carried, as is `mono_ns`,
+the phone's clock at arrival, for aligning its sensors later. The raw streams are
+listed, not parsed. A newer format version than the reader knows is refused
+rather than half-read.
+
+Two SW Maps formats are read too, and the registry picks between them by
+content, not by trusting the extension:
 
   **`.zip` / `.csv` — the CSV export.** Layers are detected by exclusion, since
   a layer file is named after a user-chosen layer rather than anything fixed.

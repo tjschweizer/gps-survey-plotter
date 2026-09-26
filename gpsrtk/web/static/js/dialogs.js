@@ -95,7 +95,8 @@ export async function confirmDialog(title, text, { yes = "Yes", no = "No" } = {}
 
 export const FILTERS = {
   export: [
-    { label: "Survey exports (*.zip *.swmz *.swm2 *.csv)", exts: [".zip", ".swmz", ".swm2", ".csv"] },
+    { label: "Survey exports (*.yardsession *.zip *.swmz *.swm2 *.csv)", exts: [".yardsession", ".zip", ".swmz", ".swm2", ".csv"] },
+    { label: "Yard Survey session (*.yardsession)", exts: [".yardsession"] },
     { label: "SW Maps project (*.swmz *.swm2)", exts: [".swmz", ".swm2"] },
     { label: "SW Maps CSV export (*.zip *.csv)", exts: [".zip", ".csv"] },
     { label: "All files", exts: [] },

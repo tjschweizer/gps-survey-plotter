@@ -60,6 +60,15 @@ and credentials are in the local config, not here.
 
 ## Data format
 
+The Yard Survey Android app (`android-gps-survey`), which replaces SW Maps,
+exports `.yardsession` zips read by `gpsrtk/io/yardsession.py`: `manifest.json`
+(format version, IANA `tz`, mount), `track_points.csv` / `shots.csv` /
+`control_checks.csv` in canonical column names with lat/lon and
+`time_utc_ms`, and the raw receiver and caster streams under `raw/`. Shots use
+`station`, `rod_text` (inches as typed), `setup`, `kind`; checks use `mark`.
+The app's exporter and this reader change together; bump the manifest
+`version` for any incompatible change.
+
 SW Maps exports a zip containing `*_TRACK_POINTS.csv`, `*_spots.csv`,
 `*_TRACKS.csv`, `*_FEATURE_POINTS.csv`, `*_PHOTOS.csv`.
 

@@ -3,5 +3,6 @@
 from .base import SurveyExport, SurveyReader, read_any, register_reader
 from . import swmaps  # noqa: F401  - registers SWMapsReader
 from . import swmaps_project  # noqa: F401  - registers SWMapsProjectReader
+from . import yardsession  # noqa: F401  - registers YardSessionReader
 
 __all__ = ["SurveyExport", "SurveyReader", "read_any", "register_reader"]

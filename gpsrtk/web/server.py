@@ -82,7 +82,7 @@ PAGE_CSP = ("default-src 'self'; script-src 'self'; "
 # an inlined PNG, and nothing else - no scripts, no requests.
 DOWNLOAD_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:"
 
-EXPORT_TYPES = [".zip", ".swmz", ".swm2", ".csv"]
+EXPORT_TYPES = [".zip", ".swmz", ".swm2", ".yardsession", ".csv"]
 RASTER_TYPES = [".tif", ".tiff", ".png", ".jpg"]
 
 
