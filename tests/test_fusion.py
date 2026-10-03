@@ -134,11 +134,11 @@ def simulated_cart(duration=200.0):
     cm, sm = np.cos(MOUNT_YAW), np.sin(MOUNT_YAW)
     f_imu = np.column_stack([cm * ax + sm * ay, -sm * ax + cm * ay, np.full(len(t), -9.80)])
     gyro = np.column_stack([np.zeros(len(t)), np.zeros(len(t)), w])
-    return t, ant, f_imu, gyro
+    return t, ant, f_imu, gyro, u
 
 
 def prepared_cart():
-    t, ant, f_imu, gyro = simulated_cart()
+    t, ant, f_imu, gyro, _ = simulated_cart()
     rng = np.random.default_rng(3)
     te = np.arange(0, t[-1], 0.1)
     e = np.interp(te, t, ant[:, 0]) + rng.normal(0, 0.003, len(te))
@@ -190,3 +190,73 @@ def test_lever_arm_and_mount_yaw(cart):
     assert lf.dy == pytest.approx(LEVER[1], abs=0.02)
     assert lf.mount_yaw_deg == pytest.approx(2.0, abs=0.3)
     assert lf.rms < lf.rms_zero
+
+
+# --- the INS filter on the simulated cart ---------------------------------------------
+
+from gpsrtk.fusion import ins  # noqa: E402
+
+
+@pytest.fixture(scope="module")
+def ins_cart():
+    """The simulated cart as the filter sees it: IMU increments at 50 Hz, GNSS at 10 Hz."""
+    t, ant, f_imu, gyro, u = simulated_cart(120.0)
+    fs, rate = 1000.0, 50.0
+    tb = np.arange(1.0, t[-1] - 1, 1 / rate)
+    cum = lambda x: np.column_stack([np.interp(tb, t, C.integrate(x[:, k], fs)) for k in range(3)])
+    # NED: the simulation's axes are (east, north); the cart starts still and level.
+    still = np.interp(tb[:-1], t, (np.hypot(*np.gradient(ant, 1 / fs, axis=0).T) < 1e-3).astype(float)) > 0.5
+    steps = ins.Steps(tb, np.diff(cum(gyro), axis=0), np.diff(cum(f_imu), axis=0), still)
+    te = np.arange(1.0, t[-1] - 1, 0.1)
+    ned = np.column_stack([np.interp(te, t, ant[:, 1]), np.interp(te, t, ant[:, 0]), np.zeros(len(te))])
+    # Lever arms in the IMU's axes: the antenna from the IMU, and the axle L_AHEAD behind the antenna.
+    mu = MOUNT_YAW
+    to_imu = np.array([[np.cos(mu), np.sin(mu), 0], [-np.sin(mu), np.cos(mu), 0], [0, 0, 1.0]])
+    la = to_imu @ -np.array([LEVER[0], LEVER[1], 0.0])
+    lp = to_imu @ (-np.array([LEVER[0], LEVER[1], 0.0]) - [L_AHEAD, 0, 0])
+    cfg = ins.Config(lever_antenna=la, lever_pivot=lp, mount_yaw=mu)
+    psi0 = 0.0  # heading at rest: the cart starts facing north
+    Cbn = ins.initial_attitude(np.array([0, 0, -9.80]), psi0 + MOUNT_YAW)
+    x0 = ins.Nominal(ned[0] - Cbn @ la, np.zeros(3), Cbn, *(np.zeros(3) for _ in range(5)))
+    sd0 = np.concatenate([[0.02] * 6, np.radians([0.3, 0.3, 1.0]), np.radians([0.05] * 3), [0.05] * 3,
+                          np.radians([0.5] * 3), [1e-4] * 3, [0.15, 0.15, 0.29]])
+    return steps, te, ned, cfg, np.diag(sd0 ** 2), np.interp(te, t, u)
+
+
+def gnss_with_gap(te, ned, gap):
+    m = (te >= gap[0]) & (te < gap[1])
+    return ins.Gnss(te, ned, np.zeros(len(te), bool), np.where(m, 0, -1), ~m), m
+
+
+def test_ins_follows_fixed_gnss(ins_cart):
+    steps, te, ned, cfg, P0, _ = ins_cart
+    x0 = ins.Nominal(ned[0] - ins.initial_attitude(np.array([0, 0, -9.8]), MOUNT_YAW) @ cfg.lever_antenna,
+                     np.zeros(3), ins.initial_attitude(np.array([0, 0, -9.8]), MOUNT_YAW),
+                     *(np.zeros(3) for _ in range(5)))
+    g, _ = gnss_with_gap(te, ned, (-1, -1))
+    r = ins.run(steps, g, cfg, 0.7, x0, P0, smooth=False)
+    est = np.column_stack([np.interp(te, r.t, r.antenna[:, k]) for k in range(3)])
+    assert np.sqrt(np.mean(np.sum((est - ned)[20:] ** 2, axis=1))) < 0.01
+
+
+def test_ins_bridges_a_gap_better_than_a_straight_line(ins_cart):
+    steps, te, ned, cfg, P0, axle_speed = ins_cart
+    Cbn = ins.initial_attitude(np.array([0, 0, -9.8]), MOUNT_YAW)
+    x0 = ins.Nominal(ned[0] - Cbn @ cfg.lever_antenna, np.zeros(3), Cbn, *(np.zeros(3) for _ in range(5)))
+    g, m = gnss_with_gap(te, ned, (50.0, 70.0))
+    r = ins.run(steps, g, cfg, 0.7, x0, P0, smooth=True)
+    est = np.column_stack([np.interp(te[m], r.t, r.antenna_smooth[:, k]) for k in range(3)])
+    smooth_err = np.sqrt(np.mean(np.sum((est - ned[m])[:, :2] ** 2, axis=1)))
+    line = np.column_stack([np.interp(te[m], te[~m], ned[~m, k]) for k in range(3)])
+    line_err = np.sqrt(np.mean(np.sum((line - ned[m])[:, :2] ** 2, axis=1)))
+    assert smooth_err < 0.02 and smooth_err < line_err / 20
+    # With a noisy accelerometer, a wheel-speed sensor holds the real-time solution
+    # together through the gap.
+    rng = np.random.default_rng(4)
+    h = np.diff(steps.t)[:, None]
+    noisy = ins.Steps(steps.t, steps.dtheta, steps.dvel + rng.normal(0, 0.3, steps.dvel.shape) * np.sqrt(h), steps.still)
+    rw = ins.run(noisy, g, cfg, 0.7, x0, P0, smooth=False, wheel=(te, axle_speed))
+    rf = ins.run(noisy, g, cfg, 0.7, x0, P0, smooth=False)
+    err = lambda res: np.sqrt(np.mean(np.sum((np.column_stack(
+        [np.interp(te[m], res.t, res.antenna[:, k]) for k in range(3)]) - ned[m])[:, :2] ** 2, axis=1)))
+    assert err(rw) < err(rf)
