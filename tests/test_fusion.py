@@ -260,3 +260,33 @@ def test_ins_bridges_a_gap_better_than_a_straight_line(ins_cart):
     err = lambda res: np.sqrt(np.mean(np.sum((np.column_stack(
         [np.interp(te[m], res.t, res.antenna[:, k]) for k in range(3)]) - ned[m])[:, :2] ** 2, axis=1)))
     assert err(rw) < err(rf)
+
+
+# --- the comparison plots -----------------------------------------------------------------
+
+def test_compare_plots_render(tmp_path):
+    """All four figures and the table, from results shaped like compare.run's."""
+    from PIL import Image
+
+    from gpsrtk.fusion import compare
+
+    rng = np.random.default_rng(0)
+    errs = lambda scale: (np.abs(rng.normal(0, scale, 50)), np.abs(rng.normal(0, scale, 50)))
+    case = lambda: {"filter": errs(0.2), "smoother": errs(0.05), "gnss": errs(0.3), "line": errs(2.0)}
+    res = {name: {(L, mode, tc): case() for L in compare.LENGTHS for mode, tc in compare.MODES}
+           for name in compare.OPTIONS}
+    timing = {lag: {(30, "outage", 0): case(), (30, "float", 10.0): case()} for lag in compare.LAGS}
+    t = np.arange(0, 60, 0.1)
+    ex = {"episode": (0.0, 60.0), "t": t, "mask": np.ones(len(t), bool),
+          "gnss": rng.normal(0, 0.3, (len(t), 3)), "line": rng.normal(0, 0.1, (len(t), 3))}
+    for name in compare.OPTIONS:
+        for kind in ("filter", "smoother"):
+            ex[f"{name} {kind}"] = rng.normal(0, 0.1, (len(t), 3))
+    paths = compare.plots({"res": res, "timing": timing, "example": ex}, tmp_path)
+    for p in paths[:4]:
+        w, h = Image.open(p).size
+        assert w > 1000 and h > 800
+    rows = paths[4].read_text().splitlines()
+    # Per case: filter and smoother for each option, and the two baselines once.
+    cases = len(compare.LENGTHS) * len(compare.MODES)
+    assert rows[0].startswith("case,length_s") and len(rows) == 1 + cases * (2 * len(compare.OPTIONS) + 2)

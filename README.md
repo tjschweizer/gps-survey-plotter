@@ -339,6 +339,14 @@ criteria: if they move, that is a regression unless CLAUDE.md is updated too.
       io/           readers, imagery/vector providers, exporters,
                     and the printed slope and contour maps (figures.py)
       filters/      serialisable filter chain
+      fusion/       IMU/GNSS fusion on Yard Survey session folders
+        ulog.py       PX4 ULog reader, Cube IMU FIFOs with their real sample clock
+        clock.py      Cube, phone and GNSS clocks put on one
+        rawsession.py a session's raw GNSS, phone IMU and Cube IMU on UTC
+        checks.py     what fusion depends on: timing, rig geometry, noise, vibration
+        ins.py        INS/GNSS error-state filter and RTS smoother
+        floatsim.py   float accuracy by simulation on a run that held a fix
+        compare.py    every option side by side, plotted
       app/          the application, with no GUI
         state.py      what is loaded, filtered, solved and fetched
         plan_edit.py  the rules behind the shot-plan table and map
@@ -569,6 +577,26 @@ mistaken for no coverage.
 Parcel polygons are cartographic (±1–3 ft), drawn dashed and labelled
 REFERENCE ONLY. An authoritative boundary needs a plat traverse from a monument
 shot with RTK; this tool does not pretend to provide one.
+
+## IMU/GNSS fusion
+
+`gpsrtk.fusion` works on a session folder as the Yard Survey app records it
+(`raw/gnss.bin`, `raw/imu.bin`, `raw/cube.ulg`, `events.jsonl`), not on the
+export: the fusion needs the raw streams and their arrival times. Reports and
+plots carry errors, rates and times, never positions.
+
+    python -m gpsrtk.fusion.checks   <session>          # step 1: clocks, geometry, noise, vibration
+    python -m gpsrtk.fusion.floatsim <session>          # float and gap accuracy, Cube IMU
+    python -m gpsrtk.fusion.compare  <session> <out>    # every option, plotted (parallel)
+
+`floatsim` and `compare` need a run that held RTK fixed throughout: its
+positions are the truth. They replace stretches of it with simulated float
+(the offset and wander in "Established findings" in CLAUDE.md) or drop GNSS,
+run the filter and smoother on the real IMU, and score inside the stretches.
+`compare` writes `1_float.png`, `2_gaps.png`, `3_sensitivity.png`,
+`4_example.png`, `summary.csv` and `results.pkl` (`--plots-only` redraws from
+it). The rig geometry in `compare.OPTIONS` is the 2026-10-02 cart's, as
+`checks` measured it; another rig needs its own.
 
 ## Known gaps
 
