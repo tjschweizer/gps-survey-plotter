@@ -73,3 +73,17 @@ def test_drainage_arrows_grow_with_slope(state, figure_surface):
         return (img.min(axis=2) > 245).sum()
 
     assert white(2.0) - white(20.0) > 10_000
+
+
+def test_drainage_map_shows_a_photo_underneath(state, figure_surface):
+    """A photo under the map shows through the heights: magenta here, which
+    turbo never draws."""
+    x, y = figures._local_axes(figure_surface, state.site)
+    photo = np.zeros((64, 64, 3), np.uint8) + np.array([255, 0, 255], np.uint8)
+    img = _pixels(figures.drainage_map(figure_surface, state.site, photo=(photo, (x[0], x[-1], y[0], y[-1]))))
+    plain = _pixels(figures.drainage_map(figure_surface, state.site))
+
+    def magenta(im):
+        return ((im[..., 0] > 150) & (im[..., 1] < 110) & (im[..., 2] > 150)).sum()
+
+    assert magenta(img) > 5000 > magenta(plain)

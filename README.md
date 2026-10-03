@@ -595,8 +595,8 @@ plots carry errors, rates and times, never positions.
 A whole session, fused and mapped:
 
     python -m gpsrtk.fusion.fuse    <session> <fused.csv>               # Cube IMU + every fixed and float epoch
-    python -m gpsrtk.fusion.maps    <fused.csv> <site.local.json> <out> # heightmap, contours, drainage
-    python -m gpsrtk.fusion.animate <fused.csv> <site.local.json> <out.gif>         --imagery "Iowa ortho 2016-2018 (leaf-off, ~22 cm)" --imagery-offset 1.0 -2.2         --append <out>/heightmap.png 5 --append <out>/drainage.png 10
+    python -m gpsrtk.fusion.maps    <fused.csv> <site.local.json> <out>         --imagery "Iowa ortho 2016-2018 (leaf-off, ~22 cm)" --imagery-offset 1.0 -1.2  # heightmap, contours, drainage
+    python -m gpsrtk.fusion.animate <fused.csv> <site.local.json> <out.gif>         --imagery "Iowa ortho 2016-2018 (leaf-off, ~22 cm)" --imagery-offset 1.0 -1.2         --append <out>/drainage_photo.png 10
 
 `fuse` integrates the Cube's FIFOs a chunk at a time, runs the filter and
 smoother over each Cube connection on the rig the session's note
@@ -604,10 +604,12 @@ describes (`--mount-yaw`, `--antenna`, `--pivot`, `--lag`), and reports
 height agreement at crossovers. On 2026-10-03 (push mower): fixed 1.4 cm
 rms, fused float 11 cm against 37 cm raw. `maps` takes every fixed epoch
 and adds fused float only in 0.5 m cells nothing fixed reached; the
-drainage map's arrows lengthen with slope over the heightmap. `fused.csv`
+drainage map's arrows lengthen with slope over the heightmap, and with
+`--imagery` a second drainage map has the photo underneath. `fused.csv`
 locates the lot: keep it, and the maps' outputs, where git ignores them.
-The imagery offset moves the photo onto the RTK track (the 2016-18 ortho
-sat about 1 m west and 2 m north of it here).
+The imagery offset moves the photo onto the RTK track: here the 2016-18
+ortho sat about 1 m west and 1-2 m north of it (by eye 1.2 m; the track's
+fit to the photo's grey said 2.2 m, leaning on its edges).
 
 `floatsim` and `compare` need a run that held RTK fixed throughout: its
 positions are the truth. They replace stretches of it with simulated float

@@ -23,7 +23,7 @@ from pyproj import Transformer
 from ..io import figures
 from ..model.pointset import E, FIX, N, TIME, Z, PointSet
 from ..site import Site
-from ..surface import build_surface
+from ..surface import Extent, build_surface
 
 CELL_M = 0.5
 
@@ -48,7 +48,42 @@ def point_set(fused: pd.DataFrame, with_float: bool = True) -> tuple[PointSet, d
     return PointSet(df, layer="track_points"), info
 
 
-def maps(fused_csv: str | Path, site_path: str | Path, out: str | Path, interval_m: float = 0.05) -> list[str]:
+def frame_limits(surface, site) -> tuple[float, float, float, float]:
+    """The heightmap's view: the measured ground plus its margin, local metres."""
+    x, y = figures._local_axes(surface, site)
+    rows, cols = np.nonzero(~surface.mask)
+    m = figures.MARGIN_M
+    return x[cols.min()] - m, x[cols.max()] + m, y[rows.min()] - m, y[rows.max()] + m
+
+
+def background(site, limits, provider_name: str | None, cache_dir: Path | None,
+               offset: tuple[float, float] = (0.0, 0.0)):
+    """(image, local extent, credit), or None for a plain background.
+
+    `offset` (east, north, metres) moves the photo onto the RTK positions:
+    aerial imagery is commonly a metre or two out (on 2026-10-03 the Iowa
+    2016-18 ortho sat about 1 m west and 1-2 m north of the mower's track)."""
+    if not provider_name:
+        return None
+    from ..io.imagery import default_providers, fetch_cached
+
+    provider = default_providers()[provider_name]
+    # Fetch beyond the frame by the shift (and a metre), so the moved photo still covers it.
+    de, dn = offset
+    pad = float(np.hypot(de, dn)) + 1.0
+    x0, x1, y0, y1 = limits
+    e0, n0 = site.to_projected(x0 - pad, y0 - pad)
+    e1, n1 = site.to_projected(x1 + pad, y1 + pad)
+    layer = fetch_cached(provider, Extent(e0, e1, n0, n1), site.epsg, 1024, cache_dir)
+    lx0, ly0 = site.to_local(layer.extent.xmin, layer.extent.ymin)
+    lx1, ly1 = site.to_local(layer.extent.xmax, layer.extent.ymax)
+    return layer.image, (lx0 + de, lx1 + de, ly0 + dn, ly1 + dn), layer.attribution or provider.attribution
+
+
+def maps(fused_csv: str | Path, site_path: str | Path, out: str | Path, interval_m: float = 0.05,
+         imagery: str | None = None, imagery_offset: tuple[float, float] = (0.0, 0.0),
+         cache_dir: str | Path | None = None) -> list[str]:
+    """The three maps; with `imagery`, also the drainage map over that photo."""
     fused = pd.read_csv(fused_csv)
     site = Site.load(site_path)
     out = Path(out)
@@ -67,6 +102,12 @@ def maps(fused_csv: str | Path, site_path: str | Path, out: str | Path, interval
                       ("drainage.png", figures.drainage_map(surface, site, note=note, interval_m=interval_m))):
         (out / name).write_bytes(png)
         lines.append(f"wrote {out / name}")
+    bg = background(site, frame_limits(surface, site), imagery, Path(cache_dir) if cache_dir else None, imagery_offset)
+    if bg is not None:
+        image, extent, credit = bg
+        (out / "drainage_photo.png").write_bytes(
+            figures.drainage_map(surface, site, note=note, interval_m=interval_m, photo=(image, extent), credit=credit))
+        lines.append(f"wrote {out / 'drainage_photo.png'}")
     return lines
 
 
@@ -76,8 +117,11 @@ def main(argv=None) -> None:
     ap.add_argument("site")
     ap.add_argument("out")
     ap.add_argument("--interval", type=float, default=0.05, help="contour interval, m")
+    ap.add_argument("--imagery", default=None, help="an imagery provider's name: also a drainage map over it")
+    ap.add_argument("--imagery-offset", type=float, nargs=2, default=(0.0, 0.0), metavar=("EAST", "NORTH"))
+    ap.add_argument("--cache", default=None, help="folder to cache imagery in")
     a = ap.parse_args(argv)
-    for line in maps(a.fused, a.site, a.out, a.interval):
+    for line in maps(a.fused, a.site, a.out, a.interval, a.imagery, tuple(a.imagery_offset), a.cache):
         print(line)
 
 

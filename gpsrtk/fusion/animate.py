@@ -25,42 +25,10 @@ import pandas as pd
 
 from ..io import figures
 from ..site import Site
-from ..surface import Extent, build_surface
-from .maps import point_set
+from ..surface import build_surface
+from .maps import background, frame_limits, point_set
 
 FPS = 10
-
-
-def frame_limits(surface, site) -> tuple[float, float, float, float]:
-    """The heightmap's view: the measured ground plus its margin, local metres."""
-    x, y = figures._local_axes(surface, site)
-    rows, cols = np.nonzero(~surface.mask)
-    m = figures.MARGIN_M
-    return x[cols.min()] - m, x[cols.max()] + m, y[rows.min()] - m, y[rows.max()] + m
-
-
-def background(site, limits, provider_name: str | None, cache_dir: Path | None,
-               offset: tuple[float, float] = (0.0, 0.0)):
-    """(image, local extent, credit), or None for a plain background.
-
-    `offset` (east, north, metres) moves the photo onto the RTK positions:
-    aerial imagery is commonly a metre or two out (on 2026-10-03 the Iowa
-    2016-18 ortho sat about 1 m west and 2 m north of the mower's track)."""
-    if not provider_name:
-        return None
-    from ..io.imagery import default_providers, fetch_cached
-
-    provider = default_providers()[provider_name]
-    # Fetch beyond the frame by the shift (and a metre), so the moved photo still covers it.
-    de, dn = offset
-    pad = float(np.hypot(de, dn)) + 1.0
-    x0, x1, y0, y1 = limits
-    e0, n0 = site.to_projected(x0 - pad, y0 - pad)
-    e1, n1 = site.to_projected(x1 + pad, y1 + pad)
-    layer = fetch_cached(provider, Extent(e0, e1, n0, n1), site.epsg, 1024, cache_dir)
-    lx0, ly0 = site.to_local(layer.extent.xmin, layer.extent.ymin)
-    lx1, ly1 = site.to_local(layer.extent.xmax, layer.extent.ymax)
-    return layer.image, (lx0 + de, lx1 + de, ly0 + dn, ly1 + dn), layer.attribution or provider.attribution
 
 
 def animate(fused_csv, site_path, out_gif, seconds: float = 30.0, provider: str | None = None,

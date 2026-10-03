@@ -133,7 +133,7 @@ def slope_map(surface: Surface, site, *, note: str = "",
     return _png(fig)
 
 
-def _height_background(ax, surface: Surface, site, interval_m: float):
+def _height_background(ax, surface: Surface, site, interval_m: float, alpha: float = 1.0):
     """Shaded relief coloured by height above the low point, with contours
     every `interval_m` (every second one labelled). Returns the colour
     scale's (norm, cmap), for its bar."""
@@ -150,7 +150,7 @@ def _height_background(ax, surface: Surface, site, interval_m: float):
     colour = cmap(norm(above_cm))[..., :3]
     shaded = LightSource(azdeg=315, altdeg=45).shade_rgb(
         colour, surface.z, blend_mode="soft", vert_exag=3.0, dx=dx, dy=dy)
-    rgba = np.dstack([np.clip(shaded, 0, 1), np.where(surface.mask, 0.0, 1.0)])
+    rgba = np.dstack([np.clip(shaded, 0, 1), np.where(surface.mask, 0.0, alpha)])
     ax.imshow(rgba, origin="lower", extent=_extent(surface, site),
               interpolation="bilinear")
     _outline(ax, surface, site)
@@ -187,10 +187,12 @@ def heightmap(surface: Surface, site, *, note: str = "",
 
 def drainage_map(surface: Surface, site, *, note: str = "", interval_m: float = 0.05,
                  arrow_spacing_m: float = 2.0, full_slope_pct: float = 10.0,
-                 key_slope_pct: float = 5.0) -> bytes:
+                 key_slope_pct: float = 5.0, photo=None, credit: str = "") -> bytes:
     """Downhill arrows over the heightmap, each as long as the ground is
     steep: full length (0.9 x the spacing, so neighbours never touch) at
-    `full_slope_pct` and steeper, shorter in proportion below. Returns PNG."""
+    `full_slope_pct` and steeper, shorter in proportion below. `photo`, an
+    (image, local extent) pair, goes underneath, the heights part-transparent
+    over it. Returns PNG."""
     from matplotlib.cm import ScalarMappable
 
     field = terrain.slope(surface)
@@ -200,7 +202,12 @@ def drainage_map(surface: Surface, site, *, note: str = "", interval_m: float = 
     head = (f"Drainage — arrows point downhill, longer where steeper "
             f"(full length at {full_slope_pct:g}%)\n{interval_m * 100:g} cm contours{slopes}")
     fig, ax = _figure(surface, site, head + (f" · {note}" if note else ""))
-    norm, cmap = _height_background(ax, surface, site, interval_m)
+    if photo is not None:
+        image, extent = photo
+        ax.imshow(image, extent=extent, origin="upper", interpolation="bilinear", zorder=0)
+        if credit:
+            ax.text(0.01, 0.01, credit, transform=ax.transAxes, fontsize=6.5, color="white", va="bottom", zorder=4)
+    norm, cmap = _height_background(ax, surface, site, interval_m, alpha=0.55 if photo is not None else 1.0)
 
     arrows = terrain.drainage_arrows(surface, arrow_spacing_m, field)
     if arrows:
