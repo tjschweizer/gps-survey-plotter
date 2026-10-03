@@ -347,6 +347,9 @@ criteria: if they move, that is a regression unless CLAUDE.md is updated too.
         ins.py        INS/GNSS error-state filter and RTS smoother
         floatsim.py   float accuracy by simulation on a run that held a fix
         compare.py    every option side by side, plotted
+        fuse.py       a whole session fused, with crossover QC
+        maps.py       heightmap, contours and drainage from a fused session
+        animate.py    the mowing animation, over imagery, with the maps after
       app/          the application, with no GUI
         state.py      what is loaded, filtered, solved and fetched
         plan_edit.py  the rules behind the shot-plan table and map
@@ -588,6 +591,23 @@ plots carry errors, rates and times, never positions.
     python -m gpsrtk.fusion.checks   <session>          # step 1: clocks, geometry, noise, vibration
     python -m gpsrtk.fusion.floatsim <session>          # float and gap accuracy, Cube IMU
     python -m gpsrtk.fusion.compare  <session> <out>    # every option, plotted (parallel)
+
+A whole session, fused and mapped:
+
+    python -m gpsrtk.fusion.fuse    <session> <fused.csv>               # Cube IMU + every fixed and float epoch
+    python -m gpsrtk.fusion.maps    <fused.csv> <site.local.json> <out> # heightmap, contours, drainage
+    python -m gpsrtk.fusion.animate <fused.csv> <site.local.json> <out.gif>         --imagery "Iowa ortho 2016-2018 (leaf-off, ~22 cm)" --imagery-offset 1.0 -2.2         --append <out>/heightmap.png 5 --append <out>/drainage.png 10
+
+`fuse` integrates the Cube's FIFOs a chunk at a time, runs the filter and
+smoother over each Cube connection on the rig the session's note
+describes (`--mount-yaw`, `--antenna`, `--pivot`, `--lag`), and reports
+height agreement at crossovers. On 2026-10-03 (push mower): fixed 1.4 cm
+rms, fused float 11 cm against 37 cm raw. `maps` takes every fixed epoch
+and adds fused float only in 0.5 m cells nothing fixed reached; the
+drainage map's arrows lengthen with slope over the heightmap. `fused.csv`
+locates the lot: keep it, and the maps' outputs, where git ignores them.
+The imagery offset moves the photo onto the RTK track (the 2016-18 ortho
+sat about 1 m west and 2 m north of it here).
 
 `floatsim` and `compare` need a run that held RTK fixed throughout: its
 positions are the truth. They replace stretches of it with simulated float

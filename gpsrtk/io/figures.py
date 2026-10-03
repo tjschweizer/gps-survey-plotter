@@ -133,24 +133,16 @@ def slope_map(surface: Surface, site, *, note: str = "",
     return _png(fig)
 
 
-def heightmap(surface: Surface, site, *, note: str = "",
-              interval_m: float = 0.05) -> bytes:
-    """Shaded relief coloured by height above the low point, with labelled
-    contours every `interval_m`. Returns PNG."""
+def _height_background(ax, surface: Surface, site, interval_m: float):
+    """Shaded relief coloured by height above the low point, with contours
+    every `interval_m` (every second one labelled). Returns the colour
+    scale's (norm, cmap), for its bar."""
     from matplotlib import colormaps
-    from matplotlib.cm import ScalarMappable
     from matplotlib.colors import LightSource, Normalize
 
     low, high = terrain.relief(surface)
-    relief_cm = (high - low) * 100.0
-    area = terrain.mapped_area_m2(surface)
-    interval_cm = interval_m * 100.0
-    head = (f"Heightmap — shaded relief, {interval_cm:g} cm contours\n"
-            f"{relief_cm:.0f} cm total relief · {area:,.0f} m² mapped")
-    fig, ax = _figure(surface, site, head + (f" · {note}" if note else ""))
-
     above_cm = (surface.z - low) * 100.0
-    norm = Normalize(0.0, max(relief_cm, 1e-6))
+    norm = Normalize(0.0, max((high - low) * 100.0, 1e-6))
     cmap = colormaps["turbo"]
     dx, dy = terrain.node_spacing(surface)
     # Colour by height, shade by the surface itself - in metres, so the
@@ -171,7 +163,94 @@ def heightmap(surface: Surface, site, *, note: str = "",
         labelled = levels[1::2]            # every second level, as on the map
         if labelled:
             ax.clabel(lines, levels=labelled, fmt="%g", fontsize=7, inline=True)
+    return norm, cmap
 
+
+def heightmap(surface: Surface, site, *, note: str = "",
+              interval_m: float = 0.05) -> bytes:
+    """Shaded relief coloured by height above the low point, with labelled
+    contours every `interval_m`. Returns PNG."""
+    from matplotlib.cm import ScalarMappable
+
+    low, high = terrain.relief(surface)
+    relief_cm = (high - low) * 100.0
+    area = terrain.mapped_area_m2(surface)
+    interval_cm = interval_m * 100.0
+    head = (f"Heightmap — shaded relief, {interval_cm:g} cm contours\n"
+            f"{relief_cm:.0f} cm total relief · {area:,.0f} m² mapped")
+    fig, ax = _figure(surface, site, head + (f" · {note}" if note else ""))
+    norm, cmap = _height_background(ax, surface, site, interval_m)
     _colourbar(fig, ax, ScalarMappable(norm=norm, cmap=cmap),
                "Height above lowest point (cm)")
+    return _png(fig)
+
+
+def drainage_map(surface: Surface, site, *, note: str = "", interval_m: float = 0.05,
+                 arrow_spacing_m: float = 2.0, full_slope_pct: float = 10.0,
+                 key_slope_pct: float = 5.0) -> bytes:
+    """Downhill arrows over the heightmap, each as long as the ground is
+    steep: full length (0.9 x the spacing, so neighbours never touch) at
+    `full_slope_pct` and steeper, shorter in proportion below. Returns PNG."""
+    from matplotlib.cm import ScalarMappable
+
+    field = terrain.slope(surface)
+    stats = field.stats()
+    slopes = (f" · slope median {stats['median']:.1f}%, 90th percentile {stats['p90']:.1f}%"
+              if stats.get("n") else "")
+    head = (f"Drainage — arrows point downhill, longer where steeper "
+            f"(full length at {full_slope_pct:g}%)\n{interval_m * 100:g} cm contours{slopes}")
+    fig, ax = _figure(surface, site, head + (f" · {note}" if note else ""))
+    norm, cmap = _height_background(ax, surface, site, interval_m)
+
+    arrows = terrain.drainage_arrows(surface, arrow_spacing_m, field)
+    if arrows:
+        full = 0.9 * arrow_spacing_m
+        ax_e, ax_n = site.to_local(np.array([a.e for a in arrows]), np.array([a.n for a in arrows]))
+        length = full * np.clip(np.array([a.slope_pct for a in arrows]) / full_slope_pct, 0, 1)
+        # White with a dark edge: legible on every colour of the scale, and
+        # unlike the thin black contours.
+        q = ax.quiver(ax_e, ax_n, length * np.array([a.down_e for a in arrows]),
+                      length * np.array([a.down_n for a in arrows]),
+                      color="white", edgecolor="black", linewidth=0.6, angles="xy",
+                      scale_units="xy", scale=1.0, pivot="mid", width=0.0032,
+                      headwidth=3.2, headlength=3.4, headaxislength=3.0, minlength=0.5, zorder=3)
+        ax.quiverkey(q, 0.86, 0.03, full * key_slope_pct / full_slope_pct, f"{key_slope_pct:g}% slope",
+                     labelpos="W", coordinates="axes", fontproperties={"size": 9})
+    _colourbar(fig, ax, ScalarMappable(norm=norm, cmap=cmap),
+               "Height above lowest point (cm)")
+    return _png(fig)
+
+
+def contour_map(surface: Surface, site, *, note: str = "",
+                interval_m: float = 0.05, major_every: int = 4) -> bytes:
+    """Contour lines every `interval_m` over a pale hillshade, every
+    `major_every`-th one heavier and labelled. Returns PNG."""
+    from matplotlib.colors import LightSource
+
+    low, high = terrain.relief(surface)
+    area = terrain.mapped_area_m2(surface)
+    interval_cm = interval_m * 100.0
+    head = (f"Contours every {interval_cm:g} cm, heavier every {interval_cm * major_every:g} cm\n"
+            f"{(high - low) * 100.0:.0f} cm total relief · {area:,.0f} m² mapped")
+    fig, ax = _figure(surface, site, head + (f" · {note}" if note else ""))
+
+    # A faint hillshade underneath, so the lines sit on recognisable ground.
+    dx, dy = terrain.node_spacing(surface)
+    shade = LightSource(azdeg=315, altdeg=45).hillshade(surface.z, vert_exag=3.0, dx=dx, dy=dy)
+    grey = np.dstack([shade, shade, shade, np.where(surface.mask, 0.0, 0.35)])
+    ax.imshow(grey, origin="lower", extent=_extent(surface, site), interpolation="bilinear")
+    _outline(ax, surface, site)
+
+    x, y = _local_axes(surface, site)
+    above_cm = np.ma.masked_invalid(np.where(surface.mask, np.nan, (surface.z - low) * 100.0))
+    levels = [lv.above_low_m * 100.0 for lv in terrain.contours(surface, interval_m)]
+    if levels:
+        step = interval_cm * major_every
+        major = [lv for lv in levels if abs(lv / step - round(lv / step)) < 1e-6]
+        minor = [lv for lv in levels if lv not in major]
+        if minor:
+            ax.contour(x, y, above_cm, levels=minor, colors="#3a3a3a", linewidths=0.45, alpha=0.8)
+        if major:
+            lines = ax.contour(x, y, above_cm, levels=major, colors="black", linewidths=1.1)
+            ax.clabel(lines, fmt="%g cm", fontsize=7.5, inline=True)
     return _png(fig)

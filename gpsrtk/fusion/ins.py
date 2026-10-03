@@ -62,7 +62,16 @@ def local_ned(lat: np.ndarray, lon: np.ndarray, h: np.ndarray) -> tuple[np.ndarr
     x0, y0, z0 = to_ecef.transform(np.mean(lon), np.mean(lat), np.mean(h))
     sl, cl, so, co = np.sin(lat0), np.cos(lat0), np.sin(lon0), np.cos(lon0)
     R = np.array([[-sl * co, -sl * so, cl], [-so, co, 0.0], [-cl * co, -cl * so, -sl]])
-    return (R @ np.vstack([x - x0, y - y0, z - z0])).T, (lat0, lon0)
+    return (R @ np.vstack([x - x0, y - y0, z - z0])).T, (lat0, lon0, (x0, y0, z0), R)
+
+
+def ned_to_geodetic(ned: np.ndarray, ref: tuple) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Back from `local_ned`'s frame: (lat, lon, ellipsoidal height)."""
+    _, _, origin, R = ref
+    xyz = (R.T @ np.asarray(ned, float).T).T + np.asarray(origin)
+    to_geo = Transformer.from_crs("EPSG:4978", "EPSG:4979", always_xy=True)
+    lon, lat, h = to_geo.transform(xyz[:, 0], xyz[:, 1], xyz[:, 2])
+    return np.asarray(lat), np.asarray(lon), np.asarray(h)
 
 
 @dataclass
@@ -86,6 +95,11 @@ def imu_steps(imu: Imu, t0: float, lag: float, rate: float, start: float, end: f
     tb = np.arange(start, end, 1 / rate)
     dth = np.diff(np.column_stack([np.interp(tb, tg, cg[:, k]) for k in range(3)]), axis=0)
     dv = np.diff(np.column_stack([np.interp(tb, ta, ca[:, k]) for k in range(3)]), axis=0)
+    return steps_from_increments(tb, dth, dv, rate)
+
+
+def steps_from_increments(tb: np.ndarray, dth: np.ndarray, dv: np.ndarray, rate: float) -> Steps:
+    """Steps from increments already integrated; marks the still ones."""
     # Still: little rotation and steady specific force over half a second.
     w = np.linalg.norm(dth, axis=1) * rate
     a = np.linalg.norm(dv, axis=1) * rate
@@ -170,6 +184,7 @@ class Result:
     sd: np.ndarray                       # filter's own antenna position sd
     nominal_last: Nominal | None = None
     extra: dict = field(default_factory=dict)
+    sd_smooth: np.ndarray | None = None  # smoother's antenna position sd, if asked for
 
 
 def initial_attitude(f_mean: np.ndarray, heading: float) -> np.ndarray:
@@ -185,8 +200,14 @@ def initial_attitude(f_mean: np.ndarray, heading: float) -> np.ndarray:
 
 def run(steps: Steps, gnss: Gnss, cfg: Config, lat0: float, x0: Nominal, P0: np.ndarray,
         smooth: bool = True, rate_meas: float = 10.0,
-        wheel: tuple[np.ndarray, np.ndarray] | None = None) -> Result:
-    """Filter, and smooth if asked. `wheel`: (times, signed forward speed) of the pivot."""
+        wheel: tuple[np.ndarray, np.ndarray] | None = None,
+        smooth_sd: bool = False, gate: float | None = None) -> Result:
+    """Filter, and smooth if asked. `wheel`: (times, signed forward speed) of the pivot.
+
+    `smooth_sd`: also carry the smoother's covariance back, for each step's
+    antenna position sd. `gate`: skip a GNSS epoch whose squared normalised
+    innovation exceeds this (a wrong fix, a multipath jump); None takes all.
+    """
     n = len(steps.dtheta)
     dt = np.diff(steps.t)
     w_ie = OMEGA_E * np.array([np.cos(lat0), 0.0, -np.sin(lat0)])
@@ -205,7 +226,8 @@ def run(steps: Steps, gnss: Gnss, cfg: Config, lat0: float, x0: Nominal, P0: np.
     gi = np.searchsorted(steps.t[1:], gnss.t)
     meas_at = {}
     for j, k in enumerate(gi):
-        if 0 <= k < n and gnss.use[j]:
+        # Only epochs inside the IMU's span: one before it would land on the first step.
+        if 0 <= k < n and gnss.use[j] and steps.t[0] < gnss.t[j] <= steps.t[-1]:
             meas_at.setdefault(int(k), []).append(j)
     nhc_every = max(1, int(round(1 / (rate_meas * np.mean(dt)))))
     wheel_at = {}
@@ -222,9 +244,23 @@ def run(steps: Steps, gnss: Gnss, cfg: Config, lat0: float, x0: Nominal, P0: np.
         store_pred, store_upd = [], []
         P_pred = np.empty((n, N, N), np.float32)
         P_upd = np.empty((n, N, N), np.float32)
-        phis = np.empty((n, N, N), np.float32)
+        f_ns = np.empty((n, 3))
 
     I = np.eye(N)
+    rejected = [0]
+
+    def transition(k: int, C: np.ndarray, f_n: np.ndarray) -> np.ndarray:
+        """The step-k error transition, rebuilt (the smoother needs it, storing it costs memory)."""
+        h = dt[k]
+        F = np.zeros((N, N))
+        F[P_, V_] = np.eye(3)
+        F[V_, A_] = -skew(f_n)
+        F[V_, BA] = -C
+        F[A_, BG] = -C
+        Phi = I + F * h
+        Phi[FW, FW] = np.eye(3) * np.exp(-h / tc)
+        return Phi
+
     for k in range(n):
         h = dt[k]
         # --- propagate
@@ -239,13 +275,7 @@ def run(steps: Steps, gnss: Gnss, cfg: Config, lat0: float, x0: Nominal, P0: np.
         phi_w = np.exp(-h / tc)
         x.fw = x.fw * phi_w
 
-        F = np.zeros((N, N))
-        F[P_, V_] = np.eye(3)
-        F[V_, A_] = -skew(f_n)
-        F[V_, BA] = -x.C
-        F[A_, BG] = -x.C
-        Phi = I + F * h
-        Phi[FW, FW] = np.eye(3) * phi_w
+        Phi = transition(k, x.C, f_n)
         Q = np.zeros(N)
         Q[V_] = cfg.vrw ** 2 * h
         Q[A_] = cfg.arw ** 2 * h
@@ -263,12 +293,15 @@ def run(steps: Steps, gnss: Gnss, cfg: Config, lat0: float, x0: Nominal, P0: np.
         if smooth:
             store_pred.append(x.copy())
             P_pred[k] = P
-            phis[k] = Phi
+            f_ns[k] = f_n
 
         # --- measurements
-        def update(Hm, r, Rm):
+        def update(Hm, r, Rm, gated=False):
             nonlocal P
             Sm = Hm @ P @ Hm.T + Rm
+            if gated and gate is not None and float(r @ np.linalg.solve(Sm, r)) > gate:
+                rejected[0] += 1
+                return
             K = np.linalg.solve(Sm, Hm @ P).T
             d = K @ r
             x.correct(d)
@@ -288,7 +321,7 @@ def run(steps: Steps, gnss: Gnss, cfg: Config, lat0: float, x0: Nominal, P0: np.
                 Rm = np.diag(np.array(cfg.float_white_sd) ** 2)
             else:
                 Rm = np.diag(np.array(cfg.fixed_sd) ** 2)
-            update(Hm, gnss.pos[j] - pred, Rm)
+            update(Hm, gnss.pos[j] - pred, Rm, gated=True)
 
         if k % nhc_every == 0:
             if steps.still[k]:
@@ -324,16 +357,32 @@ def run(steps: Steps, gnss: Gnss, cfg: Config, lat0: float, x0: Nominal, P0: np.
             store_upd.append(x.copy())
             P_upd[k] = P
 
-    ant_s = None
+    ant_s = sd_s = None
     if smooth:
         ant_s = np.empty((n, 3))
+        sd_s = np.empty((n, 3)) if smooth_sd else None
         xs = store_upd[-1].copy()
+        Ps = P_upd[-1].astype(float)
         ant_s[-1] = xs.p + xs.C @ la
+
+        def antenna_sd(Pm, C):
+            Hp = np.zeros((3, N))
+            Hp[:, P_] = np.eye(3)
+            Hp[:, A_] = -skew(C @ la)
+            return np.sqrt(np.maximum(np.diag(Hp @ Pm @ Hp.T), 0))
+
+        if smooth_sd:
+            sd_s[-1] = antenna_sd(Ps, xs.C)
         for k in range(n - 2, -1, -1):
             Pp = P_pred[k + 1].astype(float)
-            A = np.linalg.solve(Pp, phis[k + 1].astype(float) @ P_upd[k].astype(float)).T
+            Pu = P_upd[k].astype(float)
+            Phi = transition(k + 1, store_pred[k + 1].C, f_ns[k + 1])
+            A = np.linalg.solve(Pp, Phi @ Pu).T
             d = A @ xs.minus(store_pred[k + 1])
             xs = store_upd[k].copy()
             xs.correct(d)
             ant_s[k] = xs.p + xs.C @ la
-    return Result(steps.t[1:], ant, ant_s, sd, x)
+            if smooth_sd:
+                Ps = Pu + A @ (Ps - Pp) @ A.T
+                sd_s[k] = antenna_sd(Ps, xs.C)
+    return Result(steps.t[1:], ant, ant_s, sd, x, {"gnss_rejected": rejected[0]}, sd_s)

@@ -8,6 +8,7 @@ antenna with a mount yaw, and IMU timestamps late by a fixed amount.
 import struct
 
 import numpy as np
+import pandas as pd
 import pytest
 
 from gpsrtk.fusion import checks as C
@@ -45,7 +46,7 @@ def test_ulog_nested_arrays_chars_and_dropped_padding():
     assert log.dropouts == [(200, 250)]
 
 
-def fifo_log(period_us, n_records, per_record=20, jitter_us=150, lose=(), seed=1):
+def fifo_log(period_us, n_records, per_record=20, jitter_us=150, lose=(), seed=1, value=None):
     """A gyro FIFO stream from a sensor whose true sample period is `period_us`
     (nominal 125), read late by up to `jitter_us`, with some records lost."""
     rng = np.random.default_rng(seed)
@@ -60,7 +61,7 @@ def fifo_log(period_us, n_records, per_record=20, jitter_us=150, lose=(), seed=1
             continue
         truth.append(newest)
         read = int(newest + rng.uniform(0, jitter_us))
-        vals = (idx % 1000).astype(np.int16)
+        vals = (idx % 1000 if value is None else np.full(len(idx), value)).astype(np.int16)
         body = (struct.pack("<QQIff", read + 50, read, 1, 125.0, 0.001) + struct.pack("<32h", *np.resize(vals, 32))
                 + bytes(64) + bytes(64) + bytes([per_record]))
         out.append(msg("D", struct.pack("<H", 1) + body))
@@ -290,3 +291,117 @@ def test_compare_plots_render(tmp_path):
     # Per case: filter and smoother for each option, and the two baselines once.
     cases = len(compare.LENGTHS) * len(compare.MODES)
     assert rows[0].startswith("case,length_s") and len(rows) == 1 + cases * (2 * len(compare.OPTIONS) + 2)
+
+
+def test_fifo_integrals_bridge_short_holes_and_leave_long_ones_missing():
+    from gpsrtk.fusion.ulog import fifo_integrals
+
+    # 1 rad/s throughout (1000 x 0.001); records lost: one, a run of 12 (30 ms), a run of 40 (100 ms).
+    lose = {500} | set(range(1500, 1512)) | set(range(2500, 2540))
+    log, _ = fifo_log(125.9, 4000, jitter_us=100, lose=lose, value=1000)
+    edges = np.arange(1.02, 1.0 + 4000 * 20 * 125.9e-6 - 0.02, 0.005)
+    I, clipped = fifo_integrals(log, "sensor_gyro_fifo", lambda us: np.asarray(us, float) / 1e6, edges)
+    ok = np.isfinite(I).all(axis=1)
+    assert clipped == 0
+    assert np.allclose(I[ok, 0], 0.005, rtol=2e-3)
+    hole = (edges[:-1] > 1.0 + 2500 * 20 * 125.9e-6) & (edges[1:] < 1.0 + 2540 * 20 * 125.9e-6)
+    assert (~ok[hole]).all(), "a 100 ms hole must read as missing"
+    assert ok[~hole].mean() > 0.999, "short holes are bridged"
+
+
+def test_local_ned_goes_back_exactly():
+    lat = np.array([45.00, 45.0002, 44.9999])
+    lon = np.array([-100.00, -100.0003, -99.9998])
+    h = np.array([250.0, 251.3, 249.2])
+    ned, ref = ins.local_ned(lat, lon, h)
+    la, lo, hh = ins.ned_to_geodetic(ned, ref)
+    assert np.allclose(la, lat, atol=1e-10) and np.allclose(lo, lon, atol=1e-10) and np.allclose(hh, h, atol=1e-4)
+
+
+def test_ins_ignores_epochs_outside_the_imu(ins_cart):
+    """An epoch before the IMU starts once landed on its first step."""
+    steps, te, ned, cfg, P0, _ = ins_cart
+    Cbn = ins.initial_attitude(np.array([0, 0, -9.8]), MOUNT_YAW)
+    x0 = ins.Nominal(ned[0] - Cbn @ cfg.lever_antenna, np.zeros(3), Cbn, *(np.zeros(3) for _ in range(5)))
+    g, _ = gnss_with_gap(te, ned, (-1, -1))
+    early = ins.Gnss(np.r_[0.5, te], np.vstack([ned[0] + 100.0, ned]), np.r_[False, g.float_], np.r_[-1, g.episode], np.r_[True, g.use])
+    a = ins.run(steps, g, cfg, 0.7, x0, P0, smooth=False)
+    b = ins.run(steps, early, cfg, 0.7, x0, P0, smooth=False)
+    assert np.allclose(a.antenna, b.antenna)
+
+
+def test_float_runs_are_numbered_and_the_mount_turns_the_lever_arm():
+    from gpsrtk.fusion.fuse import Rig, episodes_of
+
+    assert episodes_of(np.array([4, 5, 5, 4, 5, 0, 5])).tolist() == [-1, 0, 0, -1, 1, -1, 2]
+    # Mounted with its x axis to the left: the vehicle's forward is the IMU's +y.
+    assert np.allclose(Rig(-90.0, (0.25, 0, -0.1), (0, 0, 0.2), 0.0).to_imu((0.25, 0.0, -0.1)), [0.0, 0.25, -0.1])
+
+
+# --- maps and the animation from a fused session ------------------------------------
+
+def fused_session(tmp_path):
+    """A synthetic fused.csv: passes 0.5 m apart over a 20 x 16 m tilted plane at
+    the example site, mostly fixed, some fused float, some float the IMU
+    didn't cover; and the site file."""
+    from pyproj import Transformer
+
+    from gpsrtk.site import example_site
+    from synthetic import ORIGIN_E, ORIGIN_N
+
+    rows = []
+    t = 0.0
+    for k in range(32):
+        ys = np.arange(0, 16, 0.1)
+        for y in (ys if k % 2 == 0 else ys[::-1]):
+            rows.append((t, 2 + k * 0.5, 2 + y))
+            t += 0.1
+    t, x, y = map(np.array, zip(*rows))
+    fix = np.where((np.arange(len(t)) // 200) % 5 == 4, 5, 4)
+    source = np.where((fix == 5) & (np.arange(len(t)) % 2 == 0), "gnss", "fused")
+    e, n = ORIGIN_E + x, ORIGIN_N + y
+    lon, lat = Transformer.from_crs("EPSG:32615", "EPSG:4326", always_xy=True).transform(e, n)
+    h = 250.0 + 0.03 * x + 0.01 * y
+    df = pd.DataFrame({"utc": 1_790_000_000 + t, "t": t, "fix": fix, "source": source,
+                       "lat": lat, "lon": lon, "h": h, "sd_h": 0.02})
+    csv = tmp_path / "fused.csv"
+    df.to_csv(csv, index=False)
+    site = tmp_path / "site.json"
+    example_site().save(site)
+    return csv, site, df
+
+
+def test_point_set_takes_float_only_where_nothing_fixed(tmp_path):
+    from gpsrtk.fusion.maps import point_set
+
+    _, _, df = fused_session(tmp_path)
+    ps, info = point_set(df)
+    assert info["fixed"] == (df.fix == 4).sum()
+    kept_float = ps.df[ps.df["fix"] == 5]
+    # Every float point kept sits in a 0.5 m cell no fixed point reached, and none the IMU didn't cover.
+    fixed = ps.df[ps.df["fix"] == 4]
+    key = lambda d: set(zip(np.floor(d["e"] / 0.5).astype(int), np.floor(d["n"] / 0.5).astype(int)))
+    assert not (key(kept_float) & key(fixed))
+    assert len(kept_float) == info["float_added"] <= ((df.fix == 5) & (df.source == "fused")).sum()
+
+
+def test_maps_and_animation_render(tmp_path):
+    from PIL import Image
+
+    from gpsrtk.fusion.animate import animate
+    from gpsrtk.fusion.maps import maps
+
+    csv, site, _ = fused_session(tmp_path)
+    lines = maps(csv, site, tmp_path / "plots")
+    for name in ("heightmap.png", "contours.png", "drainage.png"):
+        assert Image.open(tmp_path / "plots" / name).size[0] > 600
+    assert any("measured share" in line for line in lines)
+    gif = animate(csv, site, tmp_path / "plots" / "mowing.gif", seconds=0.5, log=lambda s: None,
+                  append=[(tmp_path / "plots" / "heightmap.png", 5), (tmp_path / "plots" / "drainage.png", 10)])
+    im = Image.open(gif)
+    assert im.n_frames == 5 + 2 and im.size[0] > 600
+    durations = []
+    for k in range(im.n_frames):
+        im.seek(k)
+        durations.append(im.info["duration"])
+    assert durations[-3:] == [3000, 5000, 10000]

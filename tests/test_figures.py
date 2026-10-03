@@ -57,3 +57,19 @@ def test_a_steeper_slope_scale_draws_the_same_ground_paler(state, figure_surface
         return (img.sum(axis=2) < 300).sum()
 
     assert darkness(20.0) < darkness(4.0)
+
+
+def test_the_contour_map_draws_its_lines(state, figure_surface):
+    img = _pixels(figures.contour_map(figure_surface, state.site, interval_m=0.05))
+    assert img.shape[1] > 900 and img.shape[0] > 600
+    assert (img.sum(axis=2) < 200).sum() > 3000, "no contour lines"
+
+
+def test_drainage_arrows_grow_with_slope(state, figure_surface):
+    """The same ground with full length at a gentler slope draws longer
+    arrows: more of the white arrow fill."""
+    def white(full):
+        img = _pixels(figures.drainage_map(figure_surface, state.site, full_slope_pct=full))
+        return (img.min(axis=2) > 245).sum()
+
+    assert white(2.0) - white(20.0) > 10_000

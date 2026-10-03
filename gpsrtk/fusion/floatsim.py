@@ -49,7 +49,7 @@ def setup(folder: str, lag: float = -0.06, imu: str = "cube", rate: float = 50.0
     sess = load(folder)
     p = C.prepare(sess)
     e = sess.epochs
-    ned, (lat0, _) = ins.local_ned(e["lat"].to_numpy(), e["lon"].to_numpy(), e["h"].to_numpy())
+    ned, (lat0, *_) = ins.local_ned(e["lat"].to_numpy(), e["lon"].to_numpy(), e["h"].to_numpy())
     t = p.ep["t"]
     start, end = p.grid[0] + 0.5, p.grid[-1] - 0.5
     steps = ins.imu_steps(sess.imus[imu], p.t0, lag, rate, start, end)

@@ -52,14 +52,17 @@ class ULog:
         self._chunks: dict[int, list[bytes]] = {}
         self._dtypes: dict[str, np.dtype] = {}
         self._last_ts = 0
+        self._keep: set | None = None
 
     @classmethod
-    def read(cls, path: str | Path) -> "ULog":
-        return cls.parse(Path(path).read_bytes())
+    def read(cls, path: str | Path, topics=None) -> "ULog":
+        """`topics`: keep data only for these names (all if None), to save memory."""
+        return cls.parse(Path(path).read_bytes(), topics)
 
     @classmethod
-    def parse(cls, buf: bytes) -> "ULog":
+    def parse(cls, buf: bytes, topics=None) -> "ULog":
         log = cls()
+        log._keep = set(topics) if topics is not None else None
         if len(buf) < 16 or buf[:7] != MAGIC:
             raise ValueError("not a ULog file")
         log.version = buf[7]
@@ -94,8 +97,10 @@ class ULog:
     def _message(self, kind: int, body: bytes) -> None:
         if kind == 0x41:  # 'A' subscription
             multi_id, msg_id = struct.unpack_from("<BH", body)
-            self.subscriptions[msg_id] = (body[3:].decode("ascii", "replace"), multi_id)
-            self._chunks.setdefault(msg_id, [])
+            name = body[3:].decode("ascii", "replace")
+            self.subscriptions[msg_id] = (name, multi_id)
+            if self._keep is None or name in self._keep:
+                self._chunks.setdefault(msg_id, [])
         elif kind == 0x46:  # 'F' format
             name, _, rest = body.decode("ascii", "replace").partition(":")
             fields = []
@@ -160,6 +165,12 @@ class ULog:
         return sorted((name, mid, len(self._chunks[i]))
                       for i, (name, mid) in self.subscriptions.items() if self._chunks.get(i))
 
+    def drop(self, name: str) -> None:
+        """Forget a topic's data once it has been used, to free its memory."""
+        for msg_id, (n, _) in self.subscriptions.items():
+            if n == name:
+                self._chunks.pop(msg_id, None)
+
     def topic(self, name: str, multi_id: int = 0) -> np.ndarray | None:
         """A topic's records. PX4 leaves trailing padding out; it is put back."""
         for msg_id, (n, m) in self.subscriptions.items():
@@ -189,6 +200,12 @@ def fifo(log: ULog, name: str, multi_id: int = 0, window: int = 400) -> tuple[np
     r = log.topic(name, multi_id)
     if r is None or len(r) < 2:
         return np.empty(0), np.empty((0, 3))
+    newest, period = _fifo_clock(r, window)
+    return _expand(r, newest, period)
+
+
+def _fifo_clock(r: np.ndarray, window: int = 400) -> tuple[np.ndarray, float]:
+    """Each record's newest-sample time (us, Cube clock), and the mean sample period (us)."""
     from scipy.ndimage import minimum_filter1d, uniform_filter1d
 
     n = r["samples"].astype(np.int64)
@@ -207,11 +224,78 @@ def fifo(log: ULog, name: str, multi_id: int = 0, window: int = 400) -> tuple[np
     late = ts - period * k
     w = min(2 * window + 1, len(ts))
     floor = uniform_filter1d(minimum_filter1d(late, w, mode="nearest"), w, mode="nearest")
-    newest = period * k + floor
+    return period * k + floor, period
 
+
+def _expand(r: np.ndarray, newest: np.ndarray, period: float) -> tuple[np.ndarray, np.ndarray]:
+    """Records to one row per sample: times (us) and values (n, 3) in SI units."""
+    n = r["samples"].astype(np.int64)
     width = r["x"].shape[1]
     j = np.arange(width)[None, :]
     keep = j < n[:, None]
     t = newest[:, None] - (n[:, None] - 1 - j) * period
     xyz = np.stack([r[a].astype(float) * r["scale"][:, None] for a in "xyz"], axis=-1)
     return t[keep], xyz[keep]
+
+
+def fifo_integrals(log: ULog, name: str, to_s, edges: np.ndarray, chunk: int = 20_000,
+                   multi_id: int = 0, max_fill: int = 10) -> tuple[np.ndarray, int]:
+    """A FIFO topic integrated over consecutive intervals, a chunk of records at a time.
+
+    `to_s` maps Cube-clock us to seconds on the caller's timeline; `edges`
+    (increasing, in those seconds) bound the intervals. Returns the (len(edges)
+    - 1, 3) integrals (rad or m/s), NaN where the data has a hole longer
+    than `max_fill` intervals, and the number of samples at full scale
+    (clipped). Each sample stands for one sample period before its time.
+
+    A gap must read as missing, never as zero: no specific force is free
+    fall to an INS, and before a USB dropout the stream thins out for a
+    while (2026-10-03: a filter fed zeros there fell a metre).
+
+    Memory stays at one chunk of samples, so a long log needn't be expanded
+    whole: 25 minutes of the Cube's 8 kHz gyro is 12 million samples.
+    """
+    r = log.topic(name, multi_id)
+    cum = np.full((len(edges), 4), np.nan)        # x, y, z, and time covered
+    if r is None or len(r) < 2:
+        return np.diff(cum, axis=0), 0
+    newest, period = _fifo_clock(r)
+    full = float(r["scale"][0]) * 32767 * 0.999
+    running = np.zeros(4)
+    prev_end = None
+    clipped = 0
+    for start in range(0, len(r), chunk):
+        sl = slice(start, start + chunk)
+        t_us, x = _expand(r[sl], newest[sl], period)
+        clipped += int((np.abs(x) >= full).any(axis=1).sum())
+        ts = to_s(t_us)
+        step = to_s(np.array([t_us[0] - period, t_us[0]]))
+        first = ts[0] - (step[1] - step[0])
+        dt = np.diff(np.concatenate([[first if prev_end is None else prev_end], ts]))
+        dt = np.minimum(dt, 2 * (step[1] - step[0]))    # lost records: no data, not held values
+        c = running + np.cumsum(np.column_stack([x * dt[:, None], dt]), axis=0)
+        lo = first if prev_end is None else prev_end
+        tt = np.concatenate([[lo], ts])
+        cc = np.vstack([running, c])
+        sel = (edges >= lo) & (edges <= ts[-1])
+        for k in range(4):
+            cum[sel, k] = np.interp(edges[sel], tt, cc[:, k])
+        running = c[-1]
+        prev_end = ts[-1]
+    out = np.diff(cum, axis=0)
+    width = np.diff(edges)
+    # A record lost here and there (a few ms): carry the rate across. A rate
+    # is the integral over the time actually covered; where nothing was
+    # covered, interpolated from either side if the hole is at most
+    # `max_fill` intervals. Longer holes stay missing.
+    covered = np.nan_to_num(out[:, 3])
+    rate = np.where(covered[:, None] > 0.2 * width[:, None], out[:, :3] / np.maximum(covered, 1e-12)[:, None], np.nan)
+    idx = np.arange(len(rate))
+    good = np.isfinite(rate).all(axis=1)
+    if good.any() and not good.all():
+        holes = np.flatnonzero(np.diff(np.concatenate([[0], (~good).astype(int), [0]])))
+        for a, b in zip(holes[::2], holes[1::2]):
+            if b - a <= max_fill and a > 0 and b < len(rate):
+                for k in range(3):
+                    rate[a:b, k] = np.interp(idx[a:b], [a - 1, b], [rate[a - 1, k], rate[b, k]])
+    return rate * width[:, None], clipped
