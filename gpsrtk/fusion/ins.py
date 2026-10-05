@@ -201,12 +201,14 @@ def initial_attitude(f_mean: np.ndarray, heading: float) -> np.ndarray:
 def run(steps: Steps, gnss: Gnss, cfg: Config, lat0: float, x0: Nominal, P0: np.ndarray,
         smooth: bool = True, rate_meas: float = 10.0,
         wheel: tuple[np.ndarray, np.ndarray] | None = None,
-        smooth_sd: bool = False, gate: float | None = None) -> Result:
+        smooth_sd: bool = False, gate: float | None = None, keep_attitude: bool = False) -> Result:
     """Filter, and smooth if asked. `wheel`: (times, signed forward speed) of the pivot.
 
     `smooth_sd`: also carry the smoother's covariance back, for each step's
     antenna position sd. `gate`: skip a GNSS epoch whose squared normalised
     innovation exceeds this (a wrong fix, a multipath jump); None takes all.
+    `keep_attitude`: the smoother's body-to-NED rotation at every step, in
+    `extra["C_smooth"]`, with the final mount misalignment in `extra["mount"]`.
     """
     n = len(steps.dtheta)
     dt = np.diff(steps.t)
@@ -373,6 +375,9 @@ def run(steps: Steps, gnss: Gnss, cfg: Config, lat0: float, x0: Nominal, P0: np.
 
         if smooth_sd:
             sd_s[-1] = antenna_sd(Ps, xs.C)
+        C_s = np.empty((n, 3, 3), np.float32) if keep_attitude else None
+        if keep_attitude:
+            C_s[-1] = xs.C
         for k in range(n - 2, -1, -1):
             Pp = P_pred[k + 1].astype(float)
             Pu = P_upd[k].astype(float)
@@ -382,7 +387,13 @@ def run(steps: Steps, gnss: Gnss, cfg: Config, lat0: float, x0: Nominal, P0: np.
             xs = store_upd[k].copy()
             xs.correct(d)
             ant_s[k] = xs.p + xs.C @ la
+            if keep_attitude:
+                C_s[k] = xs.C
             if smooth_sd:
                 Ps = Pu + A @ (Ps - Pp) @ A.T
                 sd_s[k] = antenna_sd(Ps, xs.C)
-    return Result(steps.t[1:], ant, ant_s, sd, x, {"gnss_rejected": rejected[0]}, sd_s)
+    extra = {"gnss_rejected": rejected[0]}
+    if smooth and keep_attitude:
+        extra["C_smooth"] = C_s
+        extra["mount"] = x.mount.copy()
+    return Result(steps.t[1:], ant, ant_s, sd, x, extra, sd_s)

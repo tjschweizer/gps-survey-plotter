@@ -165,7 +165,7 @@ def episodes_of(fix: np.ndarray) -> np.ndarray:
 
 
 def fuse_part(part: Part, p: C.Prepared, rig: Rig, ned: np.ndarray, fix: np.ndarray, lat0: float,
-              cfg_over: dict | None = None):
+              cfg_over: dict | None = None, keep_attitude: bool = False):
     """Filter and smoother over one Cube connection; antenna NED and sd at the epochs it covers."""
     k = GRID_HZ // FILTER_HZ
     m = (len(part.dtheta) // k) * k
@@ -202,7 +202,8 @@ def fuse_part(part: Part, p: C.Prepared, rig: Rig, ned: np.ndarray, fix: np.ndar
     # No innovation gate: rejecting epochs the filter disagrees with let it
     # drift until it rejected everything (2026-10-03: 80 cm off in 30 s).
     # Fixed epochs are trustworthy, and float error has states of its own.
-    res = ins.run(steps, gnss, cfg, lat0, x0, np.diag(sd0 ** 2), smooth=True, smooth_sd=True)
+    res = ins.run(steps, gnss, cfg, lat0, x0, np.diag(sd0 ** 2), smooth=True, smooth_sd=True,
+                  keep_attitude=keep_attitude)
     ant = np.column_stack([np.interp(te[inside], res.t, res.antenna_smooth[:, i]) for i in range(3)])
     sd = np.column_stack([np.interp(te[inside], res.t, res.sd_smooth[:, i]) for i in range(3)])
     return inside, ant, sd, res
